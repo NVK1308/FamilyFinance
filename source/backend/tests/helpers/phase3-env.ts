@@ -1,0 +1,142 @@
+import assert from 'node:assert/strict';
+import { MEMBER_ID, type MemberId } from '../../src/config/constants.ts';
+import { SqliteMemoryAdapter } from '../../src/db/sqlite-memory-adapter.ts';
+import { toSafeNumber, type DatabaseAdapter, type SqlParam } from '../../src/db/types.ts';
+import {
+  BalanceService,
+  DebtService,
+  DomainError,
+  TransactionService,
+  type DomainErrorCode,
+  type IncomingMessage,
+} from '../../src/services/index.ts';
+import { PgliteTestAdapter } from './pglite-adapter.ts';
+
+export const TELEGRAM_ID: Record<MemberId, number> = {
+  [MEMBER_ID.CHONG]: 100000001,
+  [MEMBER_ID.VO]: 100000002,
+};
+
+export interface TestEnv {
+  db: DatabaseAdapter;
+  txs: TransactionService;
+  bal: BalanceService;
+  debt: DebtService;
+  setNow(iso: string): void;
+  close(): Promise<void>;
+}
+
+export interface Backend {
+  name: string;
+  open(options?: { upToMigration?: number }): Promise<TestEnv>;
+}
+
+function buildEnv(db: DatabaseAdapter, close: () => Promise<void>): TestEnv {
+  let now = new Date('2026-11-04T03:00:00.000Z');
+  const clock = { now: () => now };
+  return {
+    db,
+    txs: new TransactionService(db, clock),
+    bal: new BalanceService(db, clock),
+    debt: new DebtService(db, clock),
+    setNow: (iso) => {
+      now = new Date(iso);
+    },
+    close,
+  };
+}
+
+// Q12: cùng bộ test chạy trên SQLite và Postgres (PGlite)
+export const BACKENDS: Backend[] = [
+  {
+    name: 'SQLite',
+    open: async (options) => buildEnv(new SqliteMemoryAdapter(options), async () => undefined),
+  },
+  {
+    name: 'PGlite',
+    open: async (options) => {
+      const db = await PgliteTestAdapter.create(options);
+      return buildEnv(db, () => db.close());
+    },
+  },
+];
+
+let updateSeq = 5000;
+export function msg(sender: MemberId | number, text: string, receivedAt = '2026-11-04T03:00:00.000Z'): IncomingMessage {
+  updateSeq += 1;
+  return {
+    updateId: updateSeq,
+    messageId: updateSeq,
+    chatId: -100,
+    senderTelegramUserId: typeof sender === 'number' ? sender : TELEGRAM_ID[sender],
+    text,
+    receivedAt,
+  };
+}
+
+let keySeq = 0;
+// Key dạng api:<uuid> cho hàm gọi tường minh
+export function apiKey(): string {
+  keySeq += 1;
+  return `api:00000000-0000-4000-8000-${String(keySeq).padStart(12, '0')}`;
+}
+
+export async function count(db: DatabaseAdapter, table: string, where = '1 = 1', params: SqlParam[] = []): Promise<number> {
+  const row = await db.queryOne<{ c: unknown }>(`SELECT COUNT(*) AS c FROM ${table} WHERE ${where}`, params);
+  return toSafeNumber(row?.c);
+}
+
+export async function snapshotCounts(db: DatabaseAdapter): Promise<Record<string, number>> {
+  const tables = ['tin_nhan_goc', 'giao_dich', 'yeu_cau_xac_nhan', 'lich_su_chinh_sua', 'khoan_no', 'lich_su_no'];
+  const result: Record<string, number> = {};
+  for (const t of tables) {
+    result[t] = await count(db, t);
+  }
+  return result;
+}
+
+export async function expectDomainError(promise: Promise<unknown>, code: DomainErrorCode): Promise<void> {
+  await assert.rejects(promise, (err: unknown) => err instanceof DomainError && err.code === code);
+}
+
+export const INITIAL_DATE = '2026-11-01';
+
+export async function seedInitial(env: TestEnv, vo = 5_000_000, chong = 3_000_000, quy = 2_000_000, cxd = 0): Promise<void> {
+  await env.bal.setInitialBalance({
+    ngayApDung: INITIAL_DATE,
+    theoNhom: { VO: vo, CHONG: chong, QUY_CHUNG: quy, CHUA_XAC_DINH: cxd },
+    tongNhap: vo + chong + quy + cxd,
+    nguoiXacNhanId: MEMBER_ID.CHONG,
+  });
+}
+
+// Chuyển nội bộ (Phase 4 mới có service) — chèn thẳng để test phần đọc
+export async function insertTransfer(
+  db: DatabaseAdapter,
+  id: string,
+  from: string,
+  to: string,
+  amount: number,
+  date: string,
+  status: string,
+): Promise<void> {
+  await db.execute(
+    `INSERT INTO chuyen_tien_noi_bo (id, nguoi_chuyen_id, nguoi_nhan_id, so_tien, ngay_chuyen, trang_thai,
+       idempotency_key, created_at, updated_at, version)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9)`,
+    [id, from, to, amount, date, status, `test:${id}`, '2026-11-04T00:00:00.000Z', await db.nextVersion()],
+  );
+}
+
+// Bất biến chính: tổng 4 nhóm = số dư gia đình tính độc lập
+export async function assertInvariant(env: TestEnv, asOf: string, label = ''): Promise<number> {
+  const holders = await env.bal.getHolderBalances(asOf);
+  const family = await env.bal.getFamilyBalance(asOf);
+  assert.equal(holders.status, 'OK', label);
+  assert.equal(family.status, 'OK', label);
+  if (holders.status === 'OK' && family.status === 'OK') {
+    assert.equal(holders.tong, family.soDu, `tổng nhóm ≠ gia đình ${label}`);
+    return family.soDu;
+  }
+  return 0;
+}

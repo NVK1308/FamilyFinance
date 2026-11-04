@@ -1,0 +1,237 @@
+{
+  "version": "4.0.0",
+  "description": "Bộ test cases chuẩn dùng chung kiểm thử Parser & Nghiệp vụ FamilyFinance (kết hợp MasterPrompt v2 + Runbook v3 + Q2: không nói người giữ tiền thì người giữ = người thực hiện)",
+  "referenceDate": "2026-11-04",
+  "transactionCases": [
+    {
+      "id": "TC_01_V2_THU_LUONG",
+      "senderId": "CHONG",
+      "rawText": "thu: lương 20tr",
+      "expected": {
+        "intent": "RECORD_TRANSACTION",
+        "loai_giao_dich": "THU",
+        "so_tien": 20000000,
+        "ma_danh_muc": "LUONG",
+        "nguoi_tao_id": "CHONG",
+        "nguoi_thuc_hien_id": "CHONG",
+        "nguoi_giu_tien_id": "CHONG",
+        "doi_tuong_thu_huong_id": null,
+        "ngay_giao_dich": "2026-11-04",
+        "requires_confirmation": [],
+        "cashflow_impact": 20000000
+      }
+    },
+    {
+      "id": "TC_02_V2_CHI_TIEN_AN",
+      "senderId": "VO",
+      "rawText": "chi: tiền ăn 50k",
+      "expected": {
+        "intent": "RECORD_TRANSACTION",
+        "loai_giao_dich": "CHI",
+        "so_tien": 50000,
+        "ma_danh_muc": "THUC_AN",
+        "nguoi_tao_id": "VO",
+        "nguoi_thuc_hien_id": "VO",
+        "nguoi_giu_tien_id": "VO",
+        "doi_tuong_thu_huong_id": null,
+        "ngay_giao_dich": "2026-11-04",
+        "requires_confirmation": [],
+        "cashflow_impact": -50000
+      }
+    },
+    {
+      "id": "TC_03_V2_THU_NO_DOC_LAP_DANH_MUC",
+      "senderId": "CHONG",
+      "rawText": "thu: nợ của a 1tr",
+      "expected": {
+        "intent": "RECORD_TRANSACTION",
+        "loai_giao_dich": "THU",
+        "so_tien": 1000000,
+        "ma_danh_muc": "NO_CUA_ANH",
+        "nguoi_tao_id": "CHONG",
+        "nguoi_thuc_hien_id": "CHONG",
+        "nguoi_giu_tien_id": "CHONG",
+        "requires_confirmation": [],
+        "cashflow_impact": 1000000
+      }
+    },
+    {
+      "id": "TC_04_V2_CHI_NO_DOC_LAP_DANH_MUC",
+      "senderId": "CHONG",
+      "rawText": "chi: nợ của a 1tr",
+      "expected": {
+        "intent": "RECORD_TRANSACTION",
+        "loai_giao_dich": "CHI",
+        "so_tien": 1000000,
+        "ma_danh_muc": "NO_CUA_ANH",
+        "nguoi_tao_id": "CHONG",
+        "nguoi_thuc_hien_id": "CHONG",
+        "nguoi_giu_tien_id": "CHONG",
+        "requires_confirmation": [],
+        "cashflow_impact": -1000000
+      }
+    },
+    {
+      "id": "TC_05_V2_KHONG_DAU_AN_UONG",
+      "senderId": "VO",
+      "rawText": "CHI: an uong 120k",
+      "expected": {
+        "intent": "RECORD_TRANSACTION",
+        "loai_giao_dich": "CHI",
+        "so_tien": 120000,
+        "ma_danh_muc": "THUC_AN",
+        "nguoi_tao_id": "VO",
+        "nguoi_thuc_hien_id": "VO",
+        "nguoi_giu_tien_id": "VO",
+        "requires_confirmation": [],
+        "cashflow_impact": -120000
+      }
+    },
+    {
+      "id": "TC_06_V2_SO_CHAM_PHAN_NGHIN",
+      "senderId": "CHONG",
+      "rawText": "thu 1.200.000 tiền thưởng",
+      "expected": {
+        "intent": "RECORD_TRANSACTION",
+        "loai_giao_dich": "THU",
+        "so_tien": 1200000,
+        "ma_danh_muc": "THUONG",
+        "nguoi_tao_id": "CHONG",
+        "nguoi_thuc_hien_id": "CHONG",
+        "nguoi_giu_tien_id": "CHONG",
+        "requires_confirmation": [],
+        "cashflow_impact": 1200000
+      }
+    },
+    {
+      "id": "TC_07_V2_NGHIN_TIEN_GUI_XE",
+      "senderId": "CHONG",
+      "rawText": "chi 50 nghìn tiền gửi xe",
+      "expected": {
+        "intent": "RECORD_TRANSACTION",
+        "loai_giao_dich": "CHI",
+        "so_tien": 50000,
+        "ma_danh_muc": "DI_LAI",
+        "nguoi_tao_id": "CHONG",
+        "nguoi_thuc_hien_id": "CHONG",
+        "nguoi_giu_tien_id": "CHONG",
+        "requires_confirmation": [],
+        "cashflow_impact": -50000
+      }
+    },
+    {
+      "id": "TC_08_V3_VO_NHAN_CHONG_THANH_TOAN",
+      "senderId": "VO",
+      "rawText": "CHI: tiền ăn 500k, chồng thanh toán",
+      "expected": {
+        "intent": "RECORD_TRANSACTION",
+        "loai_giao_dich": "CHI",
+        "so_tien": 500000,
+        "ma_danh_muc": "THUC_AN",
+        "nguoi_tao_id": "VO",
+        "nguoi_thuc_hien_id": "CHONG",
+        "nguoi_giu_tien_id": "CHONG",
+        "requires_confirmation": [],
+        "cashflow_impact": -500000
+      }
+    },
+    {
+      "id": "TC_09_V3_VO_NHAN_CHONG_MUA_SUA_CON_GAI",
+      "senderId": "VO",
+      "rawText": "CHI: chồng mua sữa cho con gái 500k",
+      "expected": {
+        "intent": "RECORD_TRANSACTION",
+        "loai_giao_dich": "CHI",
+        "so_tien": 500000,
+        "ma_danh_muc": "SUA",
+        "nguoi_tao_id": "VO",
+        "nguoi_thuc_hien_id": "CHONG",
+        "nguoi_giu_tien_id": "CHONG",
+        "doi_tuong_thu_huong_id": "CON_GAI",
+        "requires_confirmation": [],
+        "cashflow_impact": -500000
+      }
+    },
+    {
+      "id": "TC_10_V3_CO_GHI_RO_NGUOI_GIU_TIEN",
+      "senderId": "VO",
+      "rawText": "CHI: học phí con gái 2 triệu, lấy quỹ chung",
+      "expected": {
+        "intent": "RECORD_TRANSACTION",
+        "loai_giao_dich": "CHI",
+        "so_tien": 2000000,
+        "ma_danh_muc": "HOC_PHI",
+        "nguoi_tao_id": "VO",
+        "nguoi_thuc_hien_id": "VO",
+        "nguoi_giu_tien_id": "QUY_CHUNG",
+        "doi_tuong_thu_huong_id": "CON_GAI",
+        "requires_confirmation": [],
+        "cashflow_impact": -2000000
+      }
+    },
+    {
+      "id": "TC_11_V3_NHIEU_DOI_TUONG_CAN_PHAN_BO",
+      "senderId": "VO",
+      "rawText": "CHI: mua đồ ăn cho các con 500k",
+      "expected": {
+        "intent": "RECORD_TRANSACTION",
+        "loai_giao_dich": "CHI",
+        "so_tien": 500000,
+        "ma_danh_muc": "THUC_AN",
+        "nguoi_tao_id": "VO",
+        "nguoi_thuc_hien_id": "VO",
+        "nguoi_giu_tien_id": "VO",
+        "doi_tuong_thu_huong_id": null,
+        "requires_confirmation": ["PHAN_BO"],
+        "cashflow_impact": -500000
+      }
+    },
+    {
+      "id": "TC_12_P3_THU_LAI_CHO_VAY",
+      "senderId": "CHONG",
+      "rawText": "lãi cho vay 500k",
+      "expected": {
+        "intent": "RECORD_TRANSACTION",
+        "loai_giao_dich": "THU",
+        "so_tien": 500000,
+        "ma_danh_muc": "LAI_CHO_VAY",
+        "nguoi_tao_id": "CHONG",
+        "nguoi_thuc_hien_id": "CHONG",
+        "nguoi_giu_tien_id": "CHONG",
+        "requires_confirmation": [],
+        "cashflow_impact": 500000
+      }
+    }
+  ],
+  "transferCases": [
+    {
+      "id": "TC_TR_01_CHONG_CHUYEN_VO",
+      "senderId": "CHONG",
+      "rawText": "Chuyển vợ 3 triệu",
+      "expected": {
+        "intent": "INTERNAL_TRANSFER",
+        "nguoi_chuyen_id": "CHONG",
+        "nguoi_nhan_id": "VO",
+        "so_tien": 3000000,
+        "trang_thai": "CHO_XAC_NHAN",
+        "nguoi_can_xac_nhan_id": "VO",
+        "affects_family_total": false
+      }
+    },
+    {
+      "id": "TC_TR_02_VO_CHUYEN_CHONG",
+      "senderId": "VO",
+      "rawText": "Chuyển chồng 1.5tr",
+      "expected": {
+        "intent": "INTERNAL_TRANSFER",
+        "nguoi_chuyen_id": "VO",
+        "nguoi_nhan_id": "CHONG",
+        "so_tien": 1500000,
+        "trang_thai": "CHO_XAC_NHAN",
+        "nguoi_can_xac_nhan_id": "CHONG",
+        "affects_family_total": false
+      }
+    }
+  ]
+}
+

@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FamilyFinance v4.0 Shared Domain Contracts",
+  "version": "4.0.0",
+  "timezone": "Asia/Ho_Chi_Minh",
+  "currency": "VND",
+  "enums": {
+    "TransactionType": [
+      "THU",
+      "CHI",
+      "VAY",
+      "TRA_NO",
+      "LAI_VAY",
+      "PHI",
+      "DIEU_CHINH"
+    ],
+    "MessageIntent": [
+      "RECORD_TRANSACTION",
+      "INTERNAL_TRANSFER",
+      "QUERY_STATISTICS",
+      "EXPORT_HTML_REPORT",
+      "CONFIRMATION_REPLY",
+      "UNKNOWN"
+    ],
+    "MemberId": [
+      "VO",
+      "CHONG"
+    ],
+    "MoneyHolderId": [
+      "VO",
+      "CHONG",
+      "QUY_CHUNG",
+      "CHUA_XAC_DINH"
+    ],
+    "BeneficiaryId": [
+      "VO",
+      "CHONG",
+      "CON_GAI",
+      "CON_TRAI",
+      "GIA_DINH"
+    ],
+    "TransactionStatus": [
+      "CHO_XAC_NHAN",
+      "HOAN_TAT",
+      "DA_HUY"
+    ],
+    "TransferStatus": [
+      "CHO_XAC_NHAN",
+      "DA_XAC_NHAN",
+      "TU_CHOI",
+      "DA_HUY",
+      "HET_HAN"
+    ],
+    "ConfirmationType": [
+      "CHUYEN_TIEN",
+      "NGUOI_GIU_TIEN",
+      "DANH_MUC_MOI",
+      "DOI_TUONG_MOI",
+      "PHAN_BO",
+      "GIAO_DICH_MO_HO"
+    ]
+  },
+  "syncTablesOrder": [
+    "thanh_vien",
+    "so_du_ban_dau",
+    "doi_tuong_thu_huong",
+    "tu_khoa_doi_tuong",
+    "danh_muc",
+    "tu_khoa_danh_muc",
+    "tin_nhan_goc",
+    "khoan_no",
+    "giao_dich",
+    "phan_bo_giao_dich",
+    "chuyen_tien_noi_bo",
+    "lich_su_no",
+    "yeu_cau_xac_nhan",
+    "lich_su_chinh_sua",
+    "archive_manifest"
+  ],
+  "businessRules": {
+    "defaultPerformerIsSenderUnlessSpecified": true,
+    "autoInferMoneyHolderFromPerformer": false,
+    "askMoneyHolderWhenUnspecified": true,
+    "internalTransferAffectsFamilyTotal": false,
+    "loanPrincipalAffectsIncomeExpense": false
+  }
+}
+

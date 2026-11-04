@@ -1,0 +1,25 @@
+{
+  "name": "familyfinance-backend",
+  "version": "4.0.0",
+  "private": true,
+  "type": "module",
+  "description": "FamilyFinance v4.0 - Cloudflare Worker Backend & Vietnamese Finance Parser",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test:vitest": "vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260101.0",
+    "@electric-sql/pglite": "^0.5.15",
+    "@types/node": "^24.19.2",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0",
+    "wrangler": "^4.0.0"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.2.0"
+  }
+}
