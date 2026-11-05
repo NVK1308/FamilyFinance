@@ -523,6 +523,8 @@ Giao dịch này được tính:
 
 ## 7.4. Một giao dịch nhiều đối tượng
 
+> **Tạm bỏ (05/11/2026, người dùng chốt ở Phase 4):** không hỏi / không ghi phân bổ — chia khoản chi gia đình cho từng người không phản ánh đúng. Nhiều đối tượng → để đối tượng trống. Bảng `phan_bo_giao_dich` giữ nguyên để dùng sau. Nội dung dưới đây là thiết kế gốc, chỉ áp dụng khi bật lại.
+
 Hệ thống cần hỗ trợ một giao dịch có nhiều đối tượng thụ hưởng.
 
 Ví dụ:
@@ -646,6 +648,8 @@ Trường:
 Lưu các đối tượng được chi tiền.
 
 ## 8.6. `phan_bo_giao_dich`
+
+> Tạm chưa dùng (xem 7.4).
 
 Liên kết một giao dịch với nhiều đối tượng thụ hưởng.
 

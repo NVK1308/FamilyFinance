@@ -4,6 +4,7 @@ export type DomainErrorCode =
   | 'INVALID_INPUT'
   | 'NOT_FOUND'
   | 'WRONG_CONFIRMER'
+  | 'FORBIDDEN'
   | 'OVERPAY'
   | 'LOAN_CLOSED'
   | 'CANCEL_BLOCKED'

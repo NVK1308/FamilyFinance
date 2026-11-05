@@ -177,7 +177,7 @@ Bộ Parser xử lý theo pipeline 6 bước tất định (deterministic, khôn
    - `nguoi_tao_id`: Lấy trực tiếp từ `telegram_user_id` của người nhắn.
    - `nguoi_thuc_hien_id`: Nếu câu có cụm chỉ người thực hiện (`chồng trả`, `chồng thanh toán`, `chồng mua`, `vợ mua`, `vợ trả`, `lương chồng`, `lương vợ`) $\rightarrow$ gán theo người được nêu; nếu không có $\rightarrow$ mặc định bằng `nguoi_tao_id`.
    - `nguoi_giu_tien_id` (Q2): câu nói rõ người giữ ("tiền vợ giữ", "lấy quỹ chung") → theo câu; không nói → **người giữ = người thực hiện** ("lương chồng" → `CHONG`; không nêu ai → người nhắn). Ghi `HOAN_TAT` ngay, không hỏi lại `NGUOI_GIU_TIEN` cho THU/CHI thường; chỉ chuyển tiền nội bộ mới cần xác nhận (Phase 4). *(Đổi ngày 04/11/2026, thay "Hướng B" — trước đó bot hỏi lại khi câu không nói ai giữ tiền.)*
-   - `doi_tuong_thu_huong_id`: Tìm theo từ khóa đối tượng (`cho con gái`, `của con trai`, `cho các con`, `cho vợ`, `cho chồng`). Nếu là `cho các con` (nhiều đối tượng) mà chưa nêu số tiền từng con $\rightarrow$ hỏi phân bổ hoặc lưu trạng thái chờ phân bổ theo xác nhận.
+   - `doi_tuong_thu_huong_id`: Tìm theo từ khóa đối tượng (`cho con gái`, `của con trai`, `cho các con`, `cho vợ`, `cho chồng`). Nhiều đối tượng (`cho các con`, "con gái và con trai") $\rightarrow$ để đối tượng NULL, **không hỏi phân bổ** (bỏ phân bổ 05/11/2026, giữ bảng `phan_bo_giao_dich` để dùng sau).
 6. **Tra cứu Danh mục (`danh_muc`)**:
    - Khớp chính xác hoặc khớp qua bảng `tu_khoa_danh_muc` đã được xác nhận.
    - Nếu từ khóa mới chưa có trong DB $\rightarrow$ tạo `yeu_cau_xac_nhan` kèm Inline Keyboard gợi ý các danh mục gần nhất để người dùng bấm chọn và hỏi có lưu làm từ khóa mặc định cho lần sau không.
@@ -201,9 +201,11 @@ Bộ Parser xử lý theo pipeline 6 bước tất định (deterministic, khôn
 - **Phase 3 — Data Access Layer (Neon PostgreSQL) & Nghiệp vụ THU/CHI/Nợ**:
   - Xây dựng Repository & Service layer với Transaction, Idempotency (`idempotency_key` + `telegram_update_id`), Audit log (`lich_su_chinh_sua`).
   - Triển khai tính toán Số dư gia đình, Số tiền đang giữ theo từng nhóm, và quản lý Khoản nợ (`khoan_no`, `lich_su_no`).
-- **Phase 4 — Chuyển tiền nội bộ & Luồng xác nhận 2 chiều + Phân bổ đối tượng**:
+- **Phase 4 — Chuyển tiền nội bộ & Luồng xác nhận 2 chiều + Quỹ chung** *(đổi 05/11/2026: bỏ phân bổ, thêm nộp/rút quỹ chung)*:
   - Xây dựng `TransferService` (`CHO_XAC_NHAN` $\rightarrow$ gửi inline button cho người nhận $\rightarrow$ kiểm tra đúng `telegram_user_id` người nhận $\rightarrow$ `DA_XAC_NHAN` / `TU_CHOI` / `DA_HUY`).
-  - Xây dựng `AllocationService` cho giao dịch nhiều đối tượng thụ hưởng (`phan_bo_giao_dich`).
+  - "Chưa nhận" giữ chờ (chuyển khoản có thể chậm); người chuyển huỷ được khi còn chờ; đã xác nhận thì sửa bằng chuyển ngược.
+  - Nộp / rút quỹ chung (bảng `chuyen_quy_chung`, migration 0003): 1 quỹ, ghi ngay không cần xác nhận, không đổi tổng gia đình.
+  - ~~`AllocationService` (`phan_bo_giao_dich`)~~ — tạm bỏ, giữ bảng.
 - **Phase 5 — Telegram Webhook, Bot Handler & Truy vấn tự nhiên (Query Engine)**:
   - Tích hợp Webhook HTTPS, xác thực header `X-Telegram-Bot-Api-Secret-Token` và whitelist `telegram_user_id`.
   - Xây dựng bộ giải nghĩa câu hỏi thống kê tự nhiên (theo ngày/tuần/tháng/năm/khoảng ngày, theo người thực hiện, theo đối tượng thụ hưởng, theo danh mục, so sánh tháng, số dư đang giữ).

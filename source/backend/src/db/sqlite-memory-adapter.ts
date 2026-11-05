@@ -32,15 +32,16 @@ const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATION_DIR = path.resolve(currentDir, '../../../desktop/FamilyFinance.Data/Migrations');
 const SEED_DIR = path.resolve(currentDir, '../../seeds');
 
-// Theo thứ tự chạy; migration và seed cùng số đi thành cặp
-const SCHEMA_STEPS = [
+// Theo thứ tự chạy; seed cùng số là tuỳ chọn
+const SCHEMA_STEPS: ReadonlyArray<{ migration: string; seed?: string }> = [
   { migration: '0001_initial_schema.sqlite.sql', seed: '0001_seed_reference_data.sql' },
   { migration: '0002_giao_dich_chieu_dieu_chinh.sqlite.sql', seed: '0002_seed_lai_cho_vay.sql' },
-] as const;
+  { migration: '0003_chuyen_quy_chung.sqlite.sql' },
+];
 
 export interface SqliteMemoryOptions {
-  // Chỉ nạp tới migration số này (mặc định nạp hết). Dùng cho test dữ liệu cũ.
-  upToMigration?: number;
+  // Bỏ qua migration số này (vd 2 = DB cũ thiếu CHECK 0002). Dùng cho test dữ liệu cũ.
+  skipMigration?: number;
 }
 
 export class SqliteMemoryAdapter implements DatabaseAdapter {
@@ -51,11 +52,14 @@ export class SqliteMemoryAdapter implements DatabaseAdapter {
 
   constructor(options?: SqliteMemoryOptions) {
     this.db = new DatabaseSync(':memory:');
-    const upTo = options?.upToMigration ?? SCHEMA_STEPS.length;
-    SCHEMA_STEPS.slice(0, upTo).forEach((step) => {
+    const steps = SCHEMA_STEPS.filter((_step, index) => index + 1 !== options?.skipMigration);
+    steps.forEach((step) => {
       this.db.exec(fs.readFileSync(path.join(MIGRATION_DIR, step.migration), 'utf8'));
     });
-    SCHEMA_STEPS.slice(0, upTo).forEach((step) => {
+    steps.forEach((step) => {
+      if (!step.seed) {
+        return;
+      }
       const seedSql = fs
         .readFileSync(path.join(SEED_DIR, step.seed), 'utf8')
         .replace(/\bTRUE\b/g, '1')

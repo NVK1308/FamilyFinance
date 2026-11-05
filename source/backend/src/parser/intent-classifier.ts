@@ -13,6 +13,8 @@ export interface IntentClassification {
   intent: MessageIntent;
   explicitTransactionType: TransactionType | null;
   transferRecipientId: MemberId | null;
+  // Chủ ngữ trước động từ chuyển ("chồng chuyển vợ"); null nếu câu không nêu
+  transferSubjectId: MemberId | null;
 }
 
 const EXPLICIT_PREFIX_PATTERNS: ReadonlyArray<{
@@ -52,10 +54,17 @@ const QUERY_PATTERNS: readonly RegExp[] = [
   /^so\s+du\b/i,
 ];
 
-const TRANSFER_TO_VO_REGEX =
-  /^(?:chuyen(?:\s+tien|\s+khoan)?|ck|dua(?:\s+tien)?)\s+(?:cho\s+)?vo\b/i;
-const TRANSFER_TO_CHONG_REGEX =
-  /^(?:chuyen(?:\s+tien|\s+khoan)?|ck|dua(?:\s+tien)?)\s+(?:cho\s+)?chong\b/i;
+// Cho phép thời gian / chủ ngữ / "đã" đứng trước động từ chuyển: "hôm qua chồng đã chuyển vợ 2tr".
+// Nhóm 1 (thời gian + chủ ngữ + đã) giữ lại để bước tách ngày còn đọc được.
+const TRANSFER_REGEX =
+  /^((?:(?:hom\s+(?:qua|nay|kia)|(?:sang|trua|chieu|toi|dem)\s+(?:nay|qua)|(?:ngay\s+)?\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{4})?)\s+)?(?:(vo|chong)\s+)?(?:da\s+)?)(?:chuyen(?:\s+tien|\s+khoan)?|ck|dua(?:\s+tien)?)\s+(?:cho\s+)?(vo|chong)\b/i;
+
+function toMemberId(word: string | undefined): MemberId | null {
+  if (!word) {
+    return null;
+  }
+  return word.toLowerCase() === 'vo' ? MEMBER_ID.VO : MEMBER_ID.CHONG;
+}
 
 export function classifyIntent(ctx: ParseContext): IntentClassification {
   const text = ctx.workingAsciiText;
@@ -69,6 +78,7 @@ export function classifyIntent(ctx: ParseContext): IntentClassification {
         intent: MESSAGE_INTENT.RECORD_TRANSACTION,
         explicitTransactionType: item.type,
         transferRecipientId: null,
+        transferSubjectId: null,
       };
     }
   }
@@ -80,6 +90,7 @@ export function classifyIntent(ctx: ParseContext): IntentClassification {
         intent: MESSAGE_INTENT.EXPORT_HTML_REPORT,
         explicitTransactionType: null,
         transferRecipientId: null,
+        transferSubjectId: null,
       };
     }
   }
@@ -91,28 +102,20 @@ export function classifyIntent(ctx: ParseContext): IntentClassification {
         intent: MESSAGE_INTENT.QUERY_STATISTICS,
         explicitTransactionType: null,
         transferRecipientId: null,
+        transferSubjectId: null,
       };
     }
   }
 
-  // 4. Kiểm tra chuyển tiền nội bộ giữa Vợ và Chồng
-  const toVoMatch = text.match(TRANSFER_TO_VO_REGEX);
-  if (toVoMatch) {
-    ctx.workingAsciiText = normalizeWhitespace(text.slice(toVoMatch[0].length));
+  // 4. Kiểm tra chuyển tiền nội bộ giữa Vợ và Chồng (bỏ động từ + người nhận, giữ phần đứng trước)
+  const transfer = text.match(TRANSFER_REGEX);
+  if (transfer) {
+    ctx.workingAsciiText = normalizeWhitespace(`${transfer[1] ?? ''} ${text.slice(transfer[0].length)}`);
     return {
       intent: MESSAGE_INTENT.INTERNAL_TRANSFER,
       explicitTransactionType: null,
-      transferRecipientId: MEMBER_ID.VO,
-    };
-  }
-
-  const toChongMatch = text.match(TRANSFER_TO_CHONG_REGEX);
-  if (toChongMatch) {
-    ctx.workingAsciiText = normalizeWhitespace(text.slice(toChongMatch[0].length));
-    return {
-      intent: MESSAGE_INTENT.INTERNAL_TRANSFER,
-      explicitTransactionType: null,
-      transferRecipientId: MEMBER_ID.CHONG,
+      transferRecipientId: toMemberId(transfer[3]),
+      transferSubjectId: toMemberId(transfer[2]),
     };
   }
 
@@ -121,6 +124,7 @@ export function classifyIntent(ctx: ParseContext): IntentClassification {
     intent: MESSAGE_INTENT.RECORD_TRANSACTION,
     explicitTransactionType: null,
     transferRecipientId: null,
+    transferSubjectId: null,
   };
 }
 

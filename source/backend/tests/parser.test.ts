@@ -50,9 +50,23 @@ interface ContractTransferCase {
     nguoi_chuyen_id: string;
     nguoi_nhan_id: string;
     so_tien: number;
+    ngay_chuyen?: string;
     trang_thai: string;
     nguoi_can_xac_nhan_id: string;
     affects_family_total: boolean;
+  };
+}
+
+interface ContractFundCase {
+  id: string;
+  senderId: MemberId;
+  rawText: string;
+  expected: {
+    intent: string;
+    chieu: string;
+    thanh_vien_id: string;
+    so_tien: number;
+    ly_do_chua_ho_tro: string | null;
   };
 }
 
@@ -61,6 +75,7 @@ interface ContractTestSuite {
   referenceDate: string;
   transactionCases: ContractTransactionCase[];
   transferCases: ContractTransferCase[];
+  fundCases: ContractFundCase[];
 }
 
 const suite = JSON.parse(fs.readFileSync(contractsTestCasesPath, 'utf8')) as ContractTestSuite;
@@ -108,6 +123,25 @@ describe('FamilyFinance Shared Contract Test Cases (parser-test-cases.json)', ()
       assert.equal(result.trang_thai, tr.expected.trang_thai);
       assert.equal(result.nguoi_can_xac_nhan_id, tr.expected.nguoi_can_xac_nhan_id);
       assert.equal(result.affects_family_total, tr.expected.affects_family_total);
+      assert.equal(result.ly_do_chua_ho_tro, null);
+      if (tr.expected.ngay_chuyen !== undefined) {
+        assert.equal(result.ngay_chuyen, tr.expected.ngay_chuyen);
+      }
+    });
+  }
+
+  for (const fc of suite.fundCases) {
+    it(`${fc.id}: "${fc.rawText}" (sender: ${fc.senderId})`, () => {
+      const result = parseVietnameseFinanceMessage(fc.rawText, {
+        senderId: fc.senderId,
+        referenceDate: suite.referenceDate,
+      });
+
+      assert.equal(result.intent, MESSAGE_INTENT.FUND_TRANSFER);
+      assert.equal(result.chieu, fc.expected.chieu);
+      assert.equal(result.thanh_vien_id, fc.expected.thanh_vien_id);
+      assert.equal(result.so_tien, fc.expected.so_tien);
+      assert.equal(result.ly_do_chua_ho_tro, fc.expected.ly_do_chua_ho_tro);
     });
   }
 });
@@ -150,7 +184,9 @@ describe('FamilyFinance Phase 2 — Edge Cases & Regression Tests', () => {
     assert.equal(r1.ngay_giao_dich, '2026-11-03');
     assert.equal(r1.so_tien, 450_000);
     assert.equal(r1.ma_danh_muc, CATEGORY_CODE.SUA);
-    assert.deepEqual(r1.requires_confirmation, [CONFIRMATION_TYPE.PHAN_BO]);
+    // Phase 4: bỏ hỏi phân bổ — nhiều đối tượng thì để đối tượng null
+    assert.deepEqual(r1.requires_confirmation, []);
+    assert.equal(r1.doi_tuong_thu_huong_id, null);
 
     const r2 = parseVietnameseFinanceMessage('CHI: ngày 01/11/2026 đổ xăng 100k, tiền chồng giữ', {
       senderId: MEMBER_ID.CHONG,
@@ -223,6 +259,16 @@ describe('FamilyFinance Phase 2 — Edge Cases & Regression Tests', () => {
     });
     assert.equal(shared.intent, MESSAGE_INTENT.RECORD_TRANSACTION);
     assert.equal(shared.nguoi_giu_tien_id, MONEY_HOLDER_ID.QUY_CHUNG);
+  });
+
+  it('Phase 4: "x hay y" chỉ mơ hồ khi cả 2 là số tiền; buổi + qua/nay ra đúng ngày', () => {
+    const month = parseVietnameseFinanceMessage('tiền điện tháng 10 hay 500k', { senderId: MEMBER_ID.VO, referenceDate: refDate });
+    assert.equal(month.intent, MESSAGE_INTENT.RECORD_TRANSACTION);
+    assert.equal(month.so_tien, 500_000);
+    const night = parseVietnameseFinanceMessage('tối qua ăn uống 200k', { senderId: MEMBER_ID.VO, referenceDate: refDate });
+    assert.equal(night.intent, MESSAGE_INTENT.RECORD_TRANSACTION);
+    assert.equal(night.ngay_giao_dich, '2026-11-03');
+    assert.equal(night.so_tien, 200_000);
   });
 
   it('Bắt lỗi mơ hồ khi có 2 số tiền độc lập trong cùng một câu', () => {

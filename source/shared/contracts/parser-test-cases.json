@@ -1,6 +1,6 @@
 {
   "version": "4.0.0",
-  "description": "Bộ test cases chuẩn dùng chung kiểm thử Parser & Nghiệp vụ FamilyFinance (kết hợp MasterPrompt v2 + Runbook v3 + Q2: không nói người giữ tiền thì người giữ = người thực hiện)",
+  "description": "Phase 4: bỏ hỏi phân bổ (nhiều đối tượng → đối tượng null), thêm chuyển có thời gian/chủ ngữ đứng trước và nộp/rút quỹ chung. Bộ test cases chuẩn dùng chung kiểm thử Parser & Nghiệp vụ FamilyFinance (kết hợp MasterPrompt v2 + Runbook v3 + Q2: không nói người giữ tiền thì người giữ = người thực hiện)",
   "referenceDate": "2026-11-04",
   "transactionCases": [
     {
@@ -170,7 +170,7 @@
       }
     },
     {
-      "id": "TC_11_V3_NHIEU_DOI_TUONG_CAN_PHAN_BO",
+      "id": "TC_11_V4_NHIEU_DOI_TUONG_KHONG_PHAN_BO",
       "senderId": "VO",
       "rawText": "CHI: mua đồ ăn cho các con 500k",
       "expected": {
@@ -182,7 +182,7 @@
         "nguoi_thuc_hien_id": "VO",
         "nguoi_giu_tien_id": "VO",
         "doi_tuong_thu_huong_id": null,
-        "requires_confirmation": ["PHAN_BO"],
+        "requires_confirmation": [],
         "cashflow_impact": -500000
       }
     },
@@ -200,6 +200,38 @@
         "nguoi_giu_tien_id": "CHONG",
         "requires_confirmation": [],
         "cashflow_impact": 500000
+      }
+    },
+    {
+      "id": "TC_13_P4_LUONG_BO_QUY_CHUNG_LA_THU",
+      "senderId": "CHONG",
+      "rawText": "lương 10tr bỏ vào quỹ chung",
+      "expected": {
+        "intent": "RECORD_TRANSACTION",
+        "loai_giao_dich": "THU",
+        "so_tien": 10000000,
+        "ma_danh_muc": "LUONG",
+        "nguoi_tao_id": "CHONG",
+        "nguoi_thuc_hien_id": "CHONG",
+        "nguoi_giu_tien_id": "QUY_CHUNG",
+        "requires_confirmation": [],
+        "cashflow_impact": 10000000
+      }
+    },
+    {
+      "id": "TC_14_P4_LAY_QUY_CHUNG_DI_CHO_LA_CHI",
+      "senderId": "VO",
+      "rawText": "lấy quỹ chung 200k đi chợ",
+      "expected": {
+        "intent": "RECORD_TRANSACTION",
+        "loai_giao_dich": "CHI",
+        "so_tien": 200000,
+        "ma_danh_muc": "DI_CHO",
+        "nguoi_tao_id": "VO",
+        "nguoi_thuc_hien_id": "VO",
+        "nguoi_giu_tien_id": "QUY_CHUNG",
+        "requires_confirmation": [],
+        "cashflow_impact": -200000
       }
     }
   ],
@@ -231,7 +263,85 @@
         "nguoi_can_xac_nhan_id": "CHONG",
         "affects_family_total": false
       }
+    },
+    {
+      "id": "TR_03_P4_THOI_GIAN_DUNG_TRUOC",
+      "senderId": "CHONG",
+      "rawText": "hôm qua chuyển vợ 2tr",
+      "expected": {
+        "intent": "INTERNAL_TRANSFER",
+        "nguoi_chuyen_id": "CHONG",
+        "nguoi_nhan_id": "VO",
+        "so_tien": 2000000,
+        "ngay_chuyen": "2026-11-03",
+        "trang_thai": "CHO_XAC_NHAN",
+        "nguoi_can_xac_nhan_id": "VO",
+        "affects_family_total": false
+      }
+    },
+    {
+      "id": "TR_04_P4_CHU_NGU_DUNG_TRUOC",
+      "senderId": "VO",
+      "rawText": "vợ đã ck cho chồng 1tr5",
+      "expected": {
+        "intent": "INTERNAL_TRANSFER",
+        "nguoi_chuyen_id": "VO",
+        "nguoi_nhan_id": "CHONG",
+        "so_tien": 1500000,
+        "trang_thai": "CHO_XAC_NHAN",
+        "nguoi_can_xac_nhan_id": "CHONG",
+        "affects_family_total": false
+      }
+    }
+  ],
+  "fundCases": [
+    {
+      "id": "FU_01_NOP",
+      "senderId": "VO",
+      "rawText": "bỏ vào quỹ chung 2tr",
+      "expected": {
+        "intent": "FUND_TRANSFER",
+        "chieu": "NOP",
+        "thanh_vien_id": "VO",
+        "so_tien": 2000000,
+        "ly_do_chua_ho_tro": null
+      }
+    },
+    {
+      "id": "FU_02_RUT",
+      "senderId": "CHONG",
+      "rawText": "rút quỹ chung 1tr",
+      "expected": {
+        "intent": "FUND_TRANSFER",
+        "chieu": "RUT",
+        "thanh_vien_id": "CHONG",
+        "so_tien": 1000000,
+        "ly_do_chua_ho_tro": null
+      }
+    },
+    {
+      "id": "FU_03_CHUYEN_TU_QUY_LA_RUT",
+      "senderId": "CHONG",
+      "rawText": "chuyển từ quỹ chung 500k",
+      "expected": {
+        "intent": "FUND_TRANSFER",
+        "chieu": "RUT",
+        "thanh_vien_id": "CHONG",
+        "so_tien": 500000,
+        "ly_do_chua_ho_tro": null
+      }
+    },
+    {
+      "id": "FU_04_CHU_NGU_KHAC",
+      "senderId": "CHONG",
+      "rawText": "vợ nộp quỹ chung 2tr",
+      "expected": {
+        "intent": "FUND_TRANSFER",
+        "chieu": "NOP",
+        "thanh_vien_id": "CHONG",
+        "so_tien": 2000000,
+        "ly_do_chua_ho_tro": "CHU_NGU_KHAC_NGUOI_GUI"
+      }
     }
   ]
 }
-

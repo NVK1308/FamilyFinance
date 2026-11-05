@@ -5,3 +5,4 @@ export * from './debt-repository.ts';
 export * from './initial-balance-repository.ts';
 export * from './reference-repository.ts';
 export * from './balance-queries.ts';
+export * from './transfer-repository.ts';

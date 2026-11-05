@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { CONFIRMATION_TYPE, MEMBER_ID, MESSAGE_INTENT } from '../src/config/constants.ts';
-import type { DatabaseAdapter, SqlParam } from '../src/db/types.ts';
 import { parseVietnameseFinanceMessage } from '../src/parser/index.ts';
 import type { ParsedTransactionResult } from '../src/parser/types.ts';
 import { DebtService, TransactionService, toVnDate } from '../src/services/index.ts';
 import {
   BACKENDS,
+  FaultyAdapter,
   apiKey,
   count,
   expectDomainError,
@@ -19,44 +19,6 @@ function parseTx(text: string, sender: 'VO' | 'CHONG', ref = '2026-11-04'): Pars
   const r = parseVietnameseFinanceMessage(text, { senderId: sender, referenceDate: ref });
   assert.equal(r.intent, MESSAGE_INTENT.RECORD_TRANSACTION);
   return r;
-}
-
-// T22: ném lỗi ở lệnh execute thứ N bên trong transaction
-class FaultyAdapter implements DatabaseAdapter {
-  private readonly inner: DatabaseAdapter;
-  private readonly state: { calls: number; failAt: number };
-  constructor(inner: DatabaseAdapter, state: { calls: number; failAt: number }) {
-    this.inner = inner;
-    this.state = state;
-  }
-  // Đếm mọi lệnh ghi (INSERT/UPDATE), kể cả INSERT ... RETURNING đi qua query
-  private maybeFail(sql: string): void {
-    if (!/^\s*(INSERT|UPDATE)\b/i.test(sql)) {
-      return;
-    }
-    this.state.calls += 1;
-    if (this.state.calls === this.state.failAt) {
-      throw new Error(`Lỗi giả lập ở lệnh ghi #${this.state.failAt}`);
-    }
-  }
-  async query<T>(sql: string, params?: readonly SqlParam[]): Promise<T[]> {
-    this.maybeFail(sql);
-    return this.inner.query<T>(sql, params);
-  }
-  async queryOne<T>(sql: string, params?: readonly SqlParam[]): Promise<T | null> {
-    this.maybeFail(sql);
-    return this.inner.queryOne<T>(sql, params);
-  }
-  async execute(sql: string, params?: readonly SqlParam[]): Promise<{ changes: number }> {
-    this.maybeFail(sql);
-    return this.inner.execute(sql, params);
-  }
-  transaction<T>(fn: (tx: DatabaseAdapter) => Promise<T>): Promise<T> {
-    return this.inner.transaction((tx) => fn(new FaultyAdapter(tx, this.state)));
-  }
-  nextVersion(): Promise<number> {
-    return this.inner.nextVersion();
-  }
 }
 
 for (const backend of BACKENDS) {

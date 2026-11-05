@@ -27,6 +27,7 @@ export const MESSAGE_INTENT = {
   QUERY_STATISTICS: 'QUERY_STATISTICS',
   EXPORT_HTML_REPORT: 'EXPORT_HTML_REPORT',
   CONFIRMATION_REPLY: 'CONFIRMATION_REPLY',
+  FUND_TRANSFER: 'FUND_TRANSFER',
   UNKNOWN: 'UNKNOWN',
 } as const;
 
@@ -120,6 +121,21 @@ export const DEBT_CHANGE_TYPE = {
 
 export type DebtChangeType = (typeof DEBT_CHANGE_TYPE)[keyof typeof DEBT_CHANGE_TYPE];
 
+// Nộp vào / rút ra quỹ chung (bảng chuyen_quy_chung, migration 0003)
+export const FUND_DIRECTION = {
+  NOP: 'NOP',
+  RUT: 'RUT',
+} as const;
+
+export type FundDirection = (typeof FUND_DIRECTION)[keyof typeof FUND_DIRECTION];
+
+export const FUND_MOVE_STATUS = {
+  HOAN_TAT: 'HOAN_TAT',
+  DA_HUY: 'DA_HUY',
+} as const;
+
+export type FundMoveStatus = (typeof FUND_MOVE_STATUS)[keyof typeof FUND_MOVE_STATUS];
+
 // Chiều của giao dịch DIEU_CHINH (migration 0002)
 export const ADJUSTMENT_DIRECTION = {
   TANG: 'TANG',
@@ -153,6 +169,7 @@ export const TABLE_NAME = {
   GIAO_DICH: 'giao_dich',
   PHAN_BO_GIAO_DICH: 'phan_bo_giao_dich',
   CHUYEN_TIEN_NOI_BO: 'chuyen_tien_noi_bo',
+  CHUYEN_QUY_CHUNG: 'chuyen_quy_chung',
   LICH_SU_NO: 'lich_su_no',
   YEU_CAU_XAC_NHAN: 'yeu_cau_xac_nhan',
   LICH_SU_CHINH_SUA: 'lich_su_chinh_sua',

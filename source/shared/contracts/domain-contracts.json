@@ -20,6 +20,7 @@
       "QUERY_STATISTICS",
       "EXPORT_HTML_REPORT",
       "CONFIRMATION_REPLY",
+      "FUND_TRANSFER",
       "UNKNOWN"
     ],
     "MemberId": [
@@ -72,6 +73,7 @@
     "giao_dich",
     "phan_bo_giao_dich",
     "chuyen_tien_noi_bo",
+    "chuyen_quy_chung",
     "lich_su_no",
     "yeu_cau_xac_nhan",
     "lich_su_chinh_sua",

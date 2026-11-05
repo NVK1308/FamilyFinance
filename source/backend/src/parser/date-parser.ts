@@ -42,6 +42,13 @@ export function extractTransactionDate(ctx: ParseContext): string {
     }
   }
 
+  // "tối qua", "sáng nay"... (buổi + qua/nay)
+  const partOfDay = text.match(/\b(?:sang|trua|chieu|toi|dem)\s+(qua|nay)\b/i);
+  if (partOfDay) {
+    ctx.workingAsciiText = normalizeWhitespace(text.replace(partOfDay[0], ' '));
+    return partOfDay[1]!.toLowerCase() === 'qua' ? addDaysToIsoDate(ctx.referenceDate, -1) : ctx.referenceDate;
+  }
+
   if (/\bhom\s+kia\b/i.test(text)) {
     ctx.workingAsciiText = normalizeWhitespace(text.replace(/\bhom\s+kia\b/i, ' '));
     return addDaysToIsoDate(ctx.referenceDate, -2);

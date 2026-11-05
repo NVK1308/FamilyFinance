@@ -14,7 +14,6 @@ export interface RoleResolutionResult {
   nguoi_thuc_hien_id: MemberId;
   nguoi_giu_tien_id: MoneyHolderId;
   doi_tuong_thu_huong_id: BeneficiaryId | null;
-  requiresAllocation: boolean;
   hasUnknownBeneficiary: boolean;
 }
 
@@ -106,7 +105,6 @@ export function resolveRoles(ctx: ParseContext): RoleResolutionResult {
   let text = ctx.workingAsciiText;
   let nguoiGiuTienId: MoneyHolderId | null = null;
   let doiTuongThuHuongId: BeneficiaryId | null = null;
-  let requiresAllocation = false;
   let nguoiThucHienId: MemberId = ctx.senderId;
 
   // 1. Người giữ tiền câu nói rõ (quỹ chung, tiền vợ giữ...); không nói thì gán ở bước 4
@@ -118,18 +116,17 @@ export function resolveRoles(ctx: ParseContext): RoleResolutionResult {
     }
   }
 
-  // 2. Giải quyết doi_tuong_thu_huong_id (kiểm tra nhiều đối tượng trước)
+  // 2. Đối tượng thụ hưởng. Nhiều đối tượng ("các con", "con gái và con trai") → để NULL,
+  // không hỏi phân bổ (người dùng bỏ phân bổ 05/11/2026, bảng phan_bo_giao_dich giữ cho sau này)
   if (MULTI_BENEFICIARY_REGEX.test(text)) {
-    requiresAllocation = true;
-    doiTuongThuHuongId = null;
     text = normalizeWhitespace(text.replace(MULTI_BENEFICIARY_REGEX, ' '));
   } else {
-    for (const rule of BENEFICIARY_RULES) {
-      if (rule.regex.test(text)) {
-        doiTuongThuHuongId = rule.value;
-        text = normalizeWhitespace(text.replace(rule.regex, ' '));
-        break;
-      }
+    const matched = BENEFICIARY_RULES.filter((rule) => rule.regex.test(text));
+    for (const rule of matched) {
+      text = normalizeWhitespace(text.replace(rule.regex, ' '));
+    }
+    if (matched.length === 1) {
+      doiTuongThuHuongId = matched[0]!.value;
     }
   }
 
@@ -150,7 +147,6 @@ export function resolveRoles(ctx: ParseContext): RoleResolutionResult {
     nguoi_thuc_hien_id: nguoiThucHienId,
     nguoi_giu_tien_id: nguoiGiuTienId ?? nguoiThucHienId,
     doi_tuong_thu_huong_id: doiTuongThuHuongId,
-    requiresAllocation,
     hasUnknownBeneficiary: false,
   };
 }

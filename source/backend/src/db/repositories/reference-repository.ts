@@ -9,6 +9,10 @@ export function getMemberByTelegramUserId(
   ]);
 }
 
+export function getMemberById(db: DatabaseAdapter, id: string): Promise<ThanhVienRecord | null> {
+  return db.queryOne<ThanhVienRecord>('SELECT * FROM thanh_vien WHERE id = $1', [id]);
+}
+
 export function isActiveMember(member: ThanhVienRecord | null): member is ThanhVienRecord {
   return member !== null && member.deleted_at === null && Boolean(member.is_active);
 }

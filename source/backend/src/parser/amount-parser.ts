@@ -49,8 +49,18 @@ function parseSingleMatch(match: RegExpExecArray): number | null {
   return null;
 }
 
+// "3 hay 4 triệu", "2 hoặc 3tr": hai số chung 1 đơn vị → mơ hồ (quy tắc hẹp, không đụng câu khác).
+// Số đầu đứng sau tháng/ngày/tuần/năm/lần ("tiền điện tháng 10 hay 500k") thì không tính.
+const ALTERNATIVE_AMOUNT_REGEX =
+  /(?<!\b(?:thang|ngay|tuan|nam|lan)\s+)\b\d+(?:[.,]\d+)?\s*(?:hay|hoac)\s*\d+(?:[.,]\d+)?\s*(?:tr|trieu|m|cu|k|nghin|ngan)\b/i;
+
 export function extractAmountVnd(ctx: ParseContext): AmountParseResult {
   const text = ctx.workingAsciiText;
+  const alternative = text.match(ALTERNATIVE_AMOUNT_REGEX);
+  if (alternative) {
+    ctx.workingAsciiText = normalizeWhitespace(text.replace(alternative[0], ' '));
+    return { amount: null, isAmbiguous: true, matchedCount: 2 };
+  }
   const regex = new RegExp(AMOUNT_TOKEN_REGEX.source, 'gi');
   const parsedValues: number[] = [];
   const matchedTokens: string[] = [];

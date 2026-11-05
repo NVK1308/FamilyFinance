@@ -2,6 +2,7 @@ import type {
   BeneficiaryId,
   CategoryCode,
   ConfirmationType,
+  FundDirection,
   MemberId,
   MessageIntent,
   MoneyHolderId,
@@ -48,10 +49,24 @@ export interface ParsedTransferResult {
   nguoi_can_xac_nhan_id: MemberId;
   affects_family_total: false;
   requires_confirmation: ConfirmationType[];
+  // Câu chuyển chưa hỗ trợ (vd "vợ chuyển chồng" do chồng nhắn) → không tạo chuyển
+  ly_do_chua_ho_tro: string | null;
+  mo_ta: string;
+}
+
+export interface ParsedFundTransferResult {
+  intent: typeof MESSAGE_INTENT_FUND;
+  chieu: FundDirection;
+  thanh_vien_id: MemberId;
+  so_tien: number | null;
+  so_tien_mo_ho: boolean;
+  ngay_chuyen: string;
+  ly_do_chua_ho_tro: string | null;
+  mo_ta: string;
 }
 
 export interface ParsedQueryOrOtherResult {
-  intent: Exclude<MessageIntent, 'RECORD_TRANSACTION' | 'INTERNAL_TRANSFER'>;
+  intent: Exclude<MessageIntent, 'RECORD_TRANSACTION' | 'INTERNAL_TRANSFER' | 'FUND_TRANSFER'>;
   rawText: string;
   normalizedText: string;
   nguoi_tao_id: MemberId;
@@ -61,8 +76,10 @@ export interface ParsedQueryOrOtherResult {
 export type ParseResult =
   | ParsedTransactionResult
   | ParsedTransferResult
+  | ParsedFundTransferResult
   | ParsedQueryOrOtherResult;
 
 const MESSAGE_INTENT_TRANSACTION = 'RECORD_TRANSACTION' as const;
 const MESSAGE_INTENT_TRANSFER = 'INTERNAL_TRANSFER' as const;
+const MESSAGE_INTENT_FUND = 'FUND_TRANSFER' as const;
 

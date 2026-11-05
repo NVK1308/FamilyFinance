@@ -23,12 +23,9 @@ import {
   getActiveCategoryByCode,
   getConfirmationById,
   getMemberByTelegramUserId,
-  getMessageById,
-  getMessageByUpdateId,
   getTransactionById,
   getTransactionByIdempotencyKey,
   insertConfirmation,
-  insertMessageIfNew,
   insertTransaction,
   isActiveMember,
   listConfirmationsByMessage,
@@ -39,13 +36,13 @@ import {
   updateMessageStatus,
 } from '../db/repositories/index.ts';
 import type {
+  ChuyenTienNoiBoRecord,
   DatabaseAdapter,
   GiaoDichRecord,
-  TinNhanGocRecord,
   YeuCauXacNhanRecord,
 } from '../db/types.ts';
 import { parseVietnameseFinanceMessage } from '../parser/index.ts';
-import type { ParseResult, ParsedTransactionResult } from '../parser/types.ts';
+import type { ParsedTransactionResult } from '../parser/types.ts';
 import {
   DomainError,
   addDaysIso,
@@ -59,28 +56,17 @@ import {
   type ServiceOptions,
 } from './common.ts';
 import { assertMoneyHolder, recomputeLoan } from './debt-service.ts';
-
-export interface IncomingMessage {
-  updateId: number;
-  messageId: number;
-  chatId: number;
-  senderTelegramUserId: number;
-  text: string;
-  // Thời điểm nhận (ISO). Ngày giao dịch mặc định = ngày theo giờ VN của thời điểm này.
-  receivedAt: string;
-}
-
-export type RecordOutcome =
-  | {
-      kind: 'RECORDED';
-      duplicate: boolean;
-      message: TinNhanGocRecord;
-      transaction: GiaoDichRecord;
-      confirmations: YeuCauXacNhanRecord[];
-    }
-  | { kind: 'PENDING'; duplicate: boolean; message: TinNhanGocRecord; confirmations: YeuCauXacNhanRecord[] }
-  | { kind: 'IGNORED'; duplicate: boolean; message: TinNhanGocRecord; reason: string }
-  | { kind: 'NOT_TRANSACTION'; parsed: ParseResult };
+import {
+  ignoreMessage,
+  insertIncomingMessage,
+  loadExistingOutcome,
+  requireMessage,
+  telegramKey,
+  withDuplicateFallback,
+  type IncomingMessage,
+  type RecordOutcome,
+} from './message-outcome.ts';
+import { TransferService } from './transfer-service.ts';
 
 // Dữ liệu người dùng bổ sung khi trả lời câu hỏi lại (GIAO_DICH_MO_HO / DANH_MUC_MOI)
 export interface ConfirmationSupplement {
@@ -97,10 +83,12 @@ export interface ConfirmationSupplement {
 
 export type ConfirmationAction = { type: 'ACCEPT'; data?: ConfirmationSupplement } | { type: 'REJECT' };
 
+// Với yêu cầu CHUYEN_TIEN: ACCEPT = "Đã nhận", REJECT = "Chưa nhận" (vẫn chờ)
 export interface ConfirmationResult {
   changed: boolean;
   confirmation: YeuCauXacNhanRecord;
   transaction: GiaoDichRecord | null;
+  transfer?: ChuyenTienNoiBoRecord;
   // Yêu cầu không đổi vì đã quá hạn (job Phase 5 sẽ chuyển HET_HAN)
   expired: boolean;
 }
@@ -264,20 +252,19 @@ async function insertCompleted(
   return transaction;
 }
 
-function telegramKey(updateId: number): string {
-  return `tg:${updateId}`;
-}
-
 export class TransactionService {
   private readonly db: DatabaseAdapter;
   private readonly now: () => Date;
+  private readonly transfers: TransferService;
 
   constructor(db: DatabaseAdapter, options?: ServiceOptions) {
     this.db = db;
     this.now = resolveClock(options);
+    this.transfers = new TransferService(db, options);
   }
 
-  // Tin nhắn thô: kiểm người gửi, parse theo ngày VN, rồi ghi. Không phải câu ghi giao dịch → không ghi gì.
+  // Tin nhắn thô: kiểm người gửi, parse theo ngày VN, rồi ghi giao dịch / chuyển tiền / quỹ chung.
+  // Câu hỏi, báo cáo, không rõ ý → không ghi gì.
   async recordFromText(msg: IncomingMessage): Promise<RecordOutcome> {
     const member = await getMemberByTelegramUserId(this.db, msg.senderTelegramUserId);
     if (!isActiveMember(member)) {
@@ -287,6 +274,12 @@ export class TransactionService {
       senderId: member.id,
       referenceDate: toVnDate(new Date(msg.receivedAt)),
     });
+    if (parsed.intent === MESSAGE_INTENT.INTERNAL_TRANSFER) {
+      return this.transfers.recordTransferFromParsed(msg, parsed, member);
+    }
+    if (parsed.intent === MESSAGE_INTENT.FUND_TRANSFER) {
+      return this.transfers.recordFundFromParsed(msg, parsed, member);
+    }
     if (parsed.intent !== MESSAGE_INTENT.RECORD_TRANSACTION) {
       return { kind: 'NOT_TRANSACTION', parsed };
     }
@@ -304,22 +297,11 @@ export class TransactionService {
     }
     const now = this.now();
     const nowIso = now.toISOString();
-    return this.withDuplicateFallback(msg.updateId, () =>
+    return withDuplicateFallback(this.db, msg.updateId, () =>
       this.db.transaction(async (tx): Promise<RecordOutcome> => {
-        const messageId = newId('TN');
-        const inserted = await insertMessageIfNew(tx, {
-          id: messageId,
-          telegram_update_id: msg.updateId,
-          telegram_message_id: msg.messageId,
-          telegram_chat_id: msg.chatId,
-          nguoi_gui_id: member.id,
-          noi_dung_goc: msg.text,
-          thoi_gian_nhan: msg.receivedAt,
-          trang_thai_xu_ly: MESSAGE_STATUS.DA_NHAN,
-          nowIso,
-        });
-        if (!inserted) {
-          return this.loadExisting(tx, msg.updateId);
+        const messageId = await insertIncomingMessage(tx, msg, member.id, nowIso);
+        if (!messageId) {
+          return loadExistingOutcome(tx, msg.updateId);
         }
 
         const blocking = await this.findBlockingReasons(tx, parsed);
@@ -344,7 +326,7 @@ export class TransactionService {
           return {
             kind: 'PENDING',
             duplicate: false,
-            message: await this.requireMessage(tx, messageId),
+            message: await requireMessage(tx, messageId),
             confirmations,
           };
         }
@@ -369,10 +351,10 @@ export class TransactionService {
         });
         const transaction = await insertCompleted(tx, v, member.id, messageId, telegramKey(msg.updateId), nowIso);
 
-        // DOI_TUONG_MOI / PHAN_BO không chặn ghi, chỉ kèm yêu cầu (xử lý Phase 4)
+        // DOI_TUONG_MOI không chặn ghi, chỉ kèm yêu cầu (tạo đối tượng mới ở Phase 5). Phân bổ đã bỏ (Phase 4).
         const confirmations: YeuCauXacNhanRecord[] = [];
         for (const type of parsed.requires_confirmation) {
-          if (type !== CONFIRMATION_TYPE.DOI_TUONG_MOI && type !== CONFIRMATION_TYPE.PHAN_BO) {
+          if (type !== CONFIRMATION_TYPE.DOI_TUONG_MOI) {
             continue;
           }
           confirmations.push(
@@ -392,7 +374,7 @@ export class TransactionService {
         return {
           kind: 'RECORDED',
           duplicate: false,
-          message: await this.requireMessage(tx, messageId),
+          message: await requireMessage(tx, messageId),
           transaction,
           confirmations,
         };
@@ -418,12 +400,14 @@ export class TransactionService {
   }
 
   // Người dùng trả lời yêu cầu xác nhận. Bấm lặp / quá hạn → không ghi thêm.
+  // CHUYEN_TIEN: ACCEPT = "Đã nhận", REJECT = "Chưa nhận" (giữ chờ); PHAN_BO cũ chỉ đóng yêu cầu.
   async resolveConfirmation(
     yeuCauId: string,
     nguoiBamId: MemberId,
     action: ConfirmationAction,
   ): Promise<ConfirmationResult> {
-    const nowIso = this.now().toISOString();
+    const now = this.now();
+    const nowIso = now.toISOString();
     return this.db.transaction(async (tx) => {
       const request = await getConfirmationById(tx, yeuCauId);
       if (!request || request.deleted_at !== null) {
@@ -433,10 +417,22 @@ export class TransactionService {
         throw new DomainError('WRONG_CONFIRMER', 'Người bấm không phải người cần xác nhận');
       }
       if (request.loai_xac_nhan === CONFIRMATION_TYPE.CHUYEN_TIEN) {
-        throw new DomainError('NOT_SUPPORTED', 'Xác nhận chuyển tiền làm ở Phase 4');
+        const reply = await this.transfers.respondTransferInTx(
+          tx,
+          request,
+          action.type === 'ACCEPT' ? 'DA_NHAN' : 'CHUA_NHAN',
+          now,
+        );
+        return {
+          changed: reply.changed,
+          confirmation: (await getConfirmationById(tx, request.id)) ?? request,
+          transaction: null,
+          transfer: reply.transfer,
+          expired: reply.expired,
+        };
       }
       const isBlocking = BLOCKING_TYPES.includes(request.loai_xac_nhan);
-      const message = await this.requireMessage(tx, request.source_message_id);
+      const message = await requireMessage(tx, request.source_message_id);
 
       const status = action.type === 'ACCEPT' ? CONFIRMATION_STATUS.DA_XAC_NHAN : CONFIRMATION_STATUS.TU_CHOI;
       const changed = await closeConfirmation(
@@ -612,68 +608,17 @@ export class TransactionService {
     });
   }
 
+  // Người gửi không có / không active: lưu tin DA_BO_QUA (không gắn người gửi), không ghi gì khác
   private async recordIgnored(msg: IncomingMessage, reason: string): Promise<RecordOutcome> {
     const nowIso = this.now().toISOString();
-    return this.withDuplicateFallback(msg.updateId, () =>
+    return withDuplicateFallback(this.db, msg.updateId, () =>
       this.db.transaction(async (tx): Promise<RecordOutcome> => {
-        const messageId = newId('TN');
-        const inserted = await insertMessageIfNew(tx, {
-          id: messageId,
-          telegram_update_id: msg.updateId,
-          telegram_message_id: msg.messageId,
-          telegram_chat_id: msg.chatId,
-          nguoi_gui_id: null,
-          noi_dung_goc: msg.text,
-          thoi_gian_nhan: msg.receivedAt,
-          trang_thai_xu_ly: MESSAGE_STATUS.DA_BO_QUA,
-          nowIso,
-        });
-        if (!inserted) {
-          return this.loadExisting(tx, msg.updateId);
+        const messageId = await insertIncomingMessage(tx, msg, null, nowIso);
+        if (!messageId) {
+          return loadExistingOutcome(tx, msg.updateId);
         }
-        await updateMessageStatus(tx, messageId, MESSAGE_STATUS.DA_BO_QUA, nowIso, reason);
-        return { kind: 'IGNORED', duplicate: false, message: await this.requireMessage(tx, messageId), reason };
+        return ignoreMessage(tx, messageId, reason, nowIso);
       }),
     );
-  }
-
-  // Update đã xử lý trước đó: trả lại kết quả cũ, không ghi gì
-  private async loadExisting(db: DatabaseAdapter, updateId: number): Promise<RecordOutcome> {
-    const message = await getMessageByUpdateId(db, updateId);
-    if (!message) {
-      throw new Error(`Không tìm thấy tin nhắn update ${updateId}`);
-    }
-    const transaction = await getTransactionByIdempotencyKey(db, telegramKey(updateId));
-    const confirmations = await listConfirmationsByMessage(db, message.id);
-    if (transaction) {
-      return { kind: 'RECORDED', duplicate: true, message, transaction, confirmations };
-    }
-    if (message.trang_thai_xu_ly === MESSAGE_STATUS.DA_BO_QUA) {
-      return { kind: 'IGNORED', duplicate: true, message, reason: message.chi_tiet_loi ?? '' };
-    }
-    return { kind: 'PENDING', duplicate: true, message, confirmations };
-  }
-
-  // Hai request cùng update chạy song song: bên thua UNIQUE đọc lại kết quả bên thắng
-  private async withDuplicateFallback(
-    updateId: number,
-    run: () => Promise<RecordOutcome>,
-  ): Promise<RecordOutcome> {
-    try {
-      return await run();
-    } catch (error) {
-      if (isUniqueViolation(error) && (await getMessageByUpdateId(this.db, updateId))) {
-        return this.loadExisting(this.db, updateId);
-      }
-      throw error;
-    }
-  }
-
-  private async requireMessage(db: DatabaseAdapter, id: string): Promise<TinNhanGocRecord> {
-    const message = await getMessageById(db, id);
-    if (!message) {
-      throw new Error(`Không tìm thấy tin nhắn ${id}`);
-    }
-    return message;
   }
 }

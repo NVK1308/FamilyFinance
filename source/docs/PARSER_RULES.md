@@ -23,11 +23,20 @@
 | **Bước 2** | `intent-classifier.ts` | Nhận diện tiền tố tường minh (`thu:`, `chi:`, `vay:`, `trả nợ:`...), phân loại `RECORD_TRANSACTION`, `INTERNAL_TRANSFER`, `QUERY_STATISTICS`, `EXPORT_HTML_REPORT`. |
 | **Bước 3** | `date-parser.ts` | Tách ngày giao dịch (`hôm nay`, `hôm qua`, `hôm kia`, `dd/mm`, `dd/mm/yyyy`) và xóa token ngày khỏi `workingAsciiText` trước khi tách số tiền. |
 | **Bước 4** | `amount-parser.ts` | Trích xuất số tiền VND nguyên dương (`50k`, `50 nghìn`, `1tr`, `1tr5`, `1.5 triệu`, `2,5tr`, `1.200.000`, `1,200,000d`). Bỏ qua số nhỏ `< 1000` không kèm đơn vị tiền (`2 con`); phát hiện lỗi mơ hồ khi có `>= 2` cụm số tiền độc lập. |
-| **Bước 5** | `role-resolver.ts` | Xác định tuần tự: (5a) `nguoi_giu_tien_id` $\rightarrow$ (5b) `doi_tuong_thu_huong_id` / `PHAN_BO` $\rightarrow$ (5c) `nguoi_thuc_hien_id` (giữ lại động từ/danh từ nghiệp vụ như `mua`, `lương` cho bước khớp danh mục) $ightarrow$ (5d) câu không nói người giữ thì `nguoi_giu_tien_id = nguoi_thuc_hien_id`. |
+| **Bước 5** | `role-resolver.ts` | Xác định tuần tự: (5a) `nguoi_giu_tien_id` $\rightarrow$ (5b) `doi_tuong_thu_huong_id` (nhiều đối tượng → NULL, không hỏi phân bổ) $\rightarrow$ (5c) `nguoi_thuc_hien_id` (giữ lại động từ/danh từ nghiệp vụ như `mua`, `lương` cho bước khớp danh mục) $\rightarrow$ (5d) câu không nói người giữ thì `nguoi_giu_tien_id = nguoi_thuc_hien_id`. |
 | **Bước 6** | `category-matcher.ts` | Khớp từ khóa danh mục theo thứ tự ưu tiên từ khóa dài nhất trước (`longest-match first`, ví dụ `'mua do an'` khớp `THUC_AN` trước `'mua do'` của `MUA_SAM`). |
+| **Bước 4b** | `fund-detector.ts` | Nộp/rút quỹ chung (`FUND_TRANSFER`) chỉ khi câu không có tiền tố loại và sau khi bỏ cụm quỹ, số tiền, ngày, chủ ngữ của chính người gửi thì không còn chữ nào khác ("bỏ vào quỹ chung 2tr", "rút quỹ chung 1tr", "chuyển từ quỹ chung" = rút). Câu lẫn thu/chi/nợ ("lương 10tr bỏ vào quỹ chung", "lấy quỹ chung 200k đi chợ") đi luồng thường với người giữ `QUY_CHUNG`. Chủ ngữ khác người gửi / có "cho vợ/chồng" → `ly_do_chua_ho_tro`. |
 | **Bước 7** | `index.ts` | Tổng hợp kết quả, tính `cashflow_impact` và sắp xếp `requires_confirmation` theo thứ tự chuẩn: `GIAO_DICH_MO_HO` $\rightarrow$ `DANH_MUC_MOI` $\rightarrow$ `DOI_TUONG_MOI` $\rightarrow$ `PHAN_BO` (parser không còn sinh `NGUOI_GIU_TIEN`). |
 
 ---
+
+## 2b. Chuyển tiền vợ ↔ chồng (Phase 4)
+
+- `intent-classifier.ts` nhận câu chuyển cả khi có thời gian / chủ ngữ / "đã" đứng trước: "hôm qua chuyển vợ 2tr", "tối qua chồng đã ck cho vợ 1tr", "02-11 chuyển vợ 1tr". Phần đứng trước được giữ lại để bước tách ngày đọc.
+- Chủ ngữ khác người gửi ("vợ chuyển chồng" do chồng nhắn) → `ly_do_chua_ho_tro = CHU_NGU_KHAC_NGUOI_GUI`; câu chuyển có nhắc quỹ chung ("chuyển vợ 2tr từ quỹ chung") → `CHUYEN_TU_QUY_CHUNG`. Service chỉ lưu tin, không tạo chuyển.
+- "3 hay 4 triệu" (2 số cùng đơn vị) → số tiền mơ hồ; "tháng 10 hay 500k" không tính là mơ hồ.
+- "đưa vợ 2tr bỏ quỹ chung" do chồng nhắn → hiểu là chuyển cho vợ (vợ vẫn xác nhận) — chấp nhận.
+- Buổi + qua/nay ("tối qua", "sáng nay") → ngày hôm qua / hôm nay.
 
 ## 3. Lệnh Kiểm Thử Nhanh
 

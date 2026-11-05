@@ -53,6 +53,23 @@ export async function sumTransfersByRole(
   return rows.map((r) => ({ tu: r.tu, den: r.den, total: toSafeNumber(r.total) }));
 }
 
+// Nộp/rút quỹ chung đã ghi: NOP = nhóm thành viên → QUY_CHUNG, RUT = ngược lại (theo cột snapshot nhom_id)
+export async function sumFundMovesByGroup(
+  db: DatabaseAdapter,
+  from: string,
+  to: string,
+): Promise<Array<{ nhom: 'VO' | 'CHONG'; chieu: 'NOP' | 'RUT'; total: number }>> {
+  const rows = await db.query<{ nhom: 'VO' | 'CHONG'; chieu: 'NOP' | 'RUT'; total: unknown }>(
+    `SELECT q.nhom_id AS nhom, q.chieu AS chieu, COALESCE(SUM(q.so_tien), 0) AS total
+     FROM chuyen_quy_chung q
+     WHERE q.trang_thai = 'HOAN_TAT' AND q.deleted_at IS NULL
+       AND q.ngay_chuyen >= $1 AND q.ngay_chuyen <= $2
+     GROUP BY q.nhom_id, q.chieu`,
+    [from, to],
+  );
+  return rows.map((r) => ({ nhom: r.nhom, chieu: r.chieu, total: toSafeNumber(r.total) }));
+}
+
 export interface FamilyComponentRow {
   loai: TransactionType;
   chieuNo: 'DI_VAY' | 'CHO_VAY';

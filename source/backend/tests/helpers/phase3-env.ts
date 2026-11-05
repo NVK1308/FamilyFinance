@@ -7,6 +7,7 @@ import {
   DebtService,
   DomainError,
   TransactionService,
+  TransferService,
   type DomainErrorCode,
   type IncomingMessage,
 } from '../../src/services/index.ts';
@@ -20,6 +21,7 @@ export const TELEGRAM_ID: Record<MemberId, number> = {
 export interface TestEnv {
   db: DatabaseAdapter;
   txs: TransactionService;
+  transfers: TransferService;
   bal: BalanceService;
   debt: DebtService;
   setNow(iso: string): void;
@@ -28,7 +30,7 @@ export interface TestEnv {
 
 export interface Backend {
   name: string;
-  open(options?: { upToMigration?: number }): Promise<TestEnv>;
+  open(options?: { skipMigration?: number }): Promise<TestEnv>;
 }
 
 function buildEnv(db: DatabaseAdapter, close: () => Promise<void>): TestEnv {
@@ -37,6 +39,7 @@ function buildEnv(db: DatabaseAdapter, close: () => Promise<void>): TestEnv {
   return {
     db,
     txs: new TransactionService(db, clock),
+    transfers: new TransferService(db, clock),
     bal: new BalanceService(db, clock),
     debt: new DebtService(db, clock),
     setNow: (iso) => {
@@ -139,4 +142,42 @@ export async function assertInvariant(env: TestEnv, asOf: string, label = ''): P
     return family.soDu;
   }
   return 0;
+}
+
+// T22 / P11: ném lỗi ở lệnh ghi thứ N bên trong transaction
+export class FaultyAdapter implements DatabaseAdapter {
+  private readonly inner: DatabaseAdapter;
+  private readonly state: { calls: number; failAt: number };
+  constructor(inner: DatabaseAdapter, state: { calls: number; failAt: number }) {
+    this.inner = inner;
+    this.state = state;
+  }
+  // Đếm mọi lệnh ghi (INSERT/UPDATE), kể cả INSERT ... RETURNING đi qua query
+  private maybeFail(sql: string): void {
+    if (!/^\s*(INSERT|UPDATE)\b/i.test(sql)) {
+      return;
+    }
+    this.state.calls += 1;
+    if (this.state.calls === this.state.failAt) {
+      throw new Error(`Lỗi giả lập ở lệnh ghi #${this.state.failAt}`);
+    }
+  }
+  async query<T>(sql: string, params?: readonly SqlParam[]): Promise<T[]> {
+    this.maybeFail(sql);
+    return this.inner.query<T>(sql, params);
+  }
+  async queryOne<T>(sql: string, params?: readonly SqlParam[]): Promise<T | null> {
+    this.maybeFail(sql);
+    return this.inner.queryOne<T>(sql, params);
+  }
+  async execute(sql: string, params?: readonly SqlParam[]): Promise<{ changes: number }> {
+    this.maybeFail(sql);
+    return this.inner.execute(sql, params);
+  }
+  transaction<T>(fn: (tx: DatabaseAdapter) => Promise<T>): Promise<T> {
+    return this.inner.transaction((tx) => fn(new FaultyAdapter(tx, this.state)));
+  }
+  nextVersion(): Promise<number> {
+    return this.inner.nextVersion();
+  }
 }

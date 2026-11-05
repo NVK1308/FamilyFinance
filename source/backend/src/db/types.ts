@@ -5,6 +5,8 @@ import type {
   ConfirmationStatus,
   ConfirmationType,
   DebtChangeType,
+  FundDirection,
+  FundMoveStatus,
   LoanDirection,
   LoanStatus,
   MemberId,
@@ -174,10 +176,35 @@ export interface DanhMucRecord {
 
 export interface ChuyenTienNoiBoRecord {
   id: string;
-  nguoi_chuyen_id: string;
-  nguoi_nhan_id: string;
+  nguoi_chuyen_id: MemberId;
+  nguoi_nhan_id: MemberId;
   so_tien: number;
   ngay_chuyen: string;
   trang_thai: TransferStatus;
+  ngay_xac_nhan: string | null;
+  telegram_user_id_xac_nhan: number | null;
+  source_message_id: string | null;
+  idempotency_key: string;
+  ghi_chu: string | null;
+  created_at: string;
+  updated_at: string;
+  version: number;
+  deleted_at: string | null;
+}
+
+export interface ChuyenQuyChungRecord {
+  id: string;
+  chieu: FundDirection;
+  thanh_vien_id: MemberId;
+  nhom_id: 'VO' | 'CHONG';
+  so_tien: number;
+  ngay_chuyen: string;
+  trang_thai: FundMoveStatus;
+  source_message_id: string | null;
+  idempotency_key: string;
+  ghi_chu: string | null;
+  created_at: string;
+  updated_at: string;
+  version: number;
   deleted_at: string | null;
 }

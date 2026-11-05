@@ -211,7 +211,12 @@ erDiagram
 - `loai_giao_dich IN ('THU', 'CHI', 'VAY', 'TRA_NO', 'LAI_VAY', 'PHI', 'DIEU_CHINH')`.
 - `nguoi_giu_tien_id IS NULL OR nguoi_giu_tien_id IN ('VO', 'CHONG', 'QUY_CHUNG', 'CHUA_XAC_DINH')`.
 - Khi `trang_thai = 'HOAN_TAT'`, giao dịch mới được đưa vào các truy vấn tổng hợp chính thức.
-- Khi một giao dịch sử dụng phân bổ nhiều đối tượng (`phan_bo_giao_dich`), tổng `so_tien_phan_bo` của các dòng active (`deleted_at IS NULL`) thuộc `giao_dich_id` đó phải bằng `giao_dich.so_tien`, đồng thời truy vấn tổng CHI gia đình chỉ cộng trên bảng `giao_dich` để **không bao giờ tính trùng**.
+- **Phân bổ tạm bỏ (05/11/2026):** bảng `phan_bo_giao_dich` giữ nguyên để dùng sau, hiện không ghi; báo cáo theo đối tượng chỉ dựa `giao_dich.doi_tuong_thu_huong_id`. Khi dùng lại: khi một giao dịch sử dụng phân bổ nhiều đối tượng (`phan_bo_giao_dich`), tổng `so_tien_phan_bo` của các dòng active (`deleted_at IS NULL`) thuộc `giao_dich_id` đó phải bằng `giao_dich.so_tien`, đồng thời truy vấn tổng CHI gia đình chỉ cộng trên bảng `giao_dich` để **không bao giờ tính trùng**.
+
+### 3.1b. Bảng `chuyen_quy_chung` (migration 0003 — bảng thứ 17)
+- Nộp vào (`NOP`) / rút ra (`RUT`) quỹ chung, ghi ngay `HOAN_TAT` (huỷ → `DA_HUY`), không cần xác nhận.
+- `thanh_vien_id` = người thao tác; `nhom_id` (`VO`/`CHONG`) = nhóm giữ tiền lúc ghi (snapshot, không suy lại qua `vai_tro`).
+- Số dư nhóm: NOP → nhóm −X, `QUY_CHUNG` +X; RUT ngược lại. Không đổi tổng gia đình, không vào THU/CHI. `idempotency_key` UNIQUE (`tg:<update_id>`).
 
 ### 3.2. Ràng buộc trên bảng `chuyen_tien_noi_bo`
 - `nguoi_chuyen_id <> nguoi_nhan_id`: Không thể tự chuyển cho chính mình.

@@ -9,6 +9,7 @@ import {
 import { extractAmountVnd } from './amount-parser.ts';
 import { matchCategoryAndType } from './category-matcher.ts';
 import { extractTransactionDate } from './date-parser.ts';
+import { detectFundTransfer } from './fund-detector.ts';
 import { classifyIntent } from './intent-classifier.ts';
 import { createParseContext } from './normalizer.ts';
 import { resolveRoles } from './role-resolver.ts';
@@ -69,6 +70,15 @@ export function parseVietnameseFinanceMessage(
       confirmations.push(CONFIRMATION_TYPE.CHUYEN_TIEN);
     }
 
+    // Chưa hỗ trợ: chủ ngữ là người khác ("vợ chuyển chồng" do chồng nhắn, Q6);
+    // tiền lấy từ quỹ chung chuyển cho người kia ("chuyển vợ 2tr từ quỹ chung")
+    const subject = classification.transferSubjectId;
+    let unsupported: string | null = null;
+    if (subject !== null && subject !== ctx.senderId) {
+      unsupported = 'CHU_NGU_KHAC_NGUOI_GUI';
+    } else if (/\bquy\s+chung\b/i.test(ctx.asciiText)) {
+      unsupported = 'CHUYEN_TU_QUY_CHUNG';
+    }
     return {
       intent: MESSAGE_INTENT.INTERNAL_TRANSFER,
       nguoi_chuyen_id: ctx.senderId,
@@ -79,12 +89,32 @@ export function parseVietnameseFinanceMessage(
       nguoi_can_xac_nhan_id: classification.transferRecipientId,
       affects_family_total: false,
       requires_confirmation: confirmations,
+      ly_do_chua_ho_tro: unsupported,
+      mo_ta: ctx.rawText,
     };
   }
 
   // 3. Xử lý ghi nhận giao dịch (THU / CHI / VAY / TRA_NO...)
   const transactionDate = extractTransactionDate(ctx);
   const amountResult = extractAmountVnd(ctx);
+
+  // 3a. Nộp / rút quỹ chung: chỉ khi câu không có tiền tố loại và không chứa gì khác
+  if (classification.explicitTransactionType === null) {
+    const fund = detectFundTransfer(ctx.workingAsciiText, ctx.senderId);
+    if (fund) {
+      return {
+        intent: MESSAGE_INTENT.FUND_TRANSFER,
+        chieu: fund.chieu,
+        thanh_vien_id: ctx.senderId,
+        so_tien: amountResult.isAmbiguous ? null : amountResult.amount,
+        so_tien_mo_ho: amountResult.isAmbiguous,
+        ngay_chuyen: transactionDate,
+        ly_do_chua_ho_tro: fund.unsupportedReason,
+        mo_ta: ctx.rawText,
+      };
+    }
+  }
+
   const roles = resolveRoles(ctx);
   const categoryMatch = matchCategoryAndType(ctx, classification.explicitTransactionType);
 
@@ -104,10 +134,6 @@ export function parseVietnameseFinanceMessage(
 
   if (roles.hasUnknownBeneficiary) {
     confirmations.push(CONFIRMATION_TYPE.DOI_TUONG_MOI);
-  }
-
-  if (roles.requiresAllocation) {
-    confirmations.push(CONFIRMATION_TYPE.PHAN_BO);
   }
 
   return {

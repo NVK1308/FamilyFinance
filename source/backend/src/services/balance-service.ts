@@ -20,6 +20,7 @@ import {
   sumPeriodIncomeExpense,
   sumTransactionsByHolder,
   sumTransactionsByType,
+  sumFundMovesByGroup,
   sumTransfersByRole,
   updateInitialBalance,
 } from '../db/repositories/index.ts';
@@ -156,7 +157,7 @@ export class BalanceService {
     return { ngayApDung: input.ngayApDung, theoNhom: { ...input.theoNhom } };
   }
 
-  // Cách 1: số dư từng nhóm = ban đầu + giao dịch theo người giữ + chuyển nội bộ đã xác nhận
+  // Cách 1: số dư từng nhóm = ban đầu + giao dịch theo người giữ + chuyển nội bộ đã xác nhận + nộp/rút quỹ chung
   async getHolderBalances(asOf: string): Promise<HolderBalancesResult> {
     assertDate(asOf, 'asOf');
     const gate = await this.checkInitial(asOf);
@@ -171,6 +172,11 @@ export class BalanceService {
     for (const t of await sumTransfersByRole(this.db, gate.initial.ngayApDung, asOf)) {
       nhom[t.tu] -= t.total;
       nhom[t.den] += t.total;
+    }
+    for (const f of await sumFundMovesByGroup(this.db, gate.initial.ngayApDung, asOf)) {
+      const sign = f.chieu === 'NOP' ? 1 : -1;
+      nhom[f.nhom] -= sign * f.total;
+      nhom.QUY_CHUNG += sign * f.total;
     }
     const tong = HOLDERS.reduce((sum, h) => sum + nhom[h], 0);
     return { status: 'OK', asOf, ngayApDung: gate.initial.ngayApDung, nhom, tong };

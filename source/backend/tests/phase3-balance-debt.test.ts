@@ -345,7 +345,7 @@ for (const backend of BACKENDS) {
 
   describe(`Phase 3 — dữ liệu cũ thiếu CHECK 0002 [${backend.name}]`, () => {
     it('T25d: giao dịch HOAN_TAT holder NULL → checkConsistency báo chênh đúng số, chỉ ra bản ghi', async () => {
-      const env = await backend.open({ upToMigration: 1 });
+      const env = await backend.open({ skipMigration: 2 });
       try {
         // Giả lập bản sao cũ: có cột chieu_dieu_chinh nhưng chưa có CHECK của 0002
         await env.db.execute('ALTER TABLE giao_dich ADD COLUMN chieu_dieu_chinh TEXT NULL');

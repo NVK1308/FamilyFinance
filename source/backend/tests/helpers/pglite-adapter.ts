@@ -13,10 +13,11 @@ const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATION_DIR = path.resolve(currentDir, '../../migrations');
 const SEED_DIR = path.resolve(currentDir, '../../seeds');
 
-const SCHEMA_STEPS = [
+const SCHEMA_STEPS: ReadonlyArray<{ migration: string; seed?: string }> = [
   { migration: '0001_initial_schema.postgres.sql', seed: '0001_seed_reference_data.sql' },
   { migration: '0002_giao_dich_chieu_dieu_chinh.postgres.sql', seed: '0002_seed_lai_cho_vay.sql' },
-] as const;
+  { migration: '0003_chuyen_quy_chung.postgres.sql' },
+];
 
 // Q12: Postgres thật chạy trong tiến trình (PGlite) để test cùng bộ SQL với Neon
 export class PgliteTestAdapter extends PgCoreAdapter {
@@ -38,14 +39,17 @@ export class PgliteTestAdapter extends PgCoreAdapter {
     this.pg = pg;
   }
 
-  static async create(options?: { upToMigration?: number }): Promise<PgliteTestAdapter> {
+  static async create(options?: { skipMigration?: number }): Promise<PgliteTestAdapter> {
     const pg = await PGlite.create({ parsers: PG_TEXT_PARSERS });
-    const upTo = options?.upToMigration ?? SCHEMA_STEPS.length;
-    for (const step of SCHEMA_STEPS.slice(0, upTo)) {
+    // Bỏ qua migration số skipMigration (test dữ liệu cũ)
+    const steps = SCHEMA_STEPS.filter((_step, index) => index + 1 !== options?.skipMigration);
+    for (const step of steps) {
       await pg.exec(fs.readFileSync(path.join(MIGRATION_DIR, step.migration), 'utf8'));
     }
-    for (const step of SCHEMA_STEPS.slice(0, upTo)) {
-      await pg.exec(fs.readFileSync(path.join(SEED_DIR, step.seed), 'utf8'));
+    for (const step of steps) {
+      if (step.seed) {
+        await pg.exec(fs.readFileSync(path.join(SEED_DIR, step.seed), 'utf8'));
+      }
     }
     const serial = createSerialQueue();
     const exec: PgExecutor = {
