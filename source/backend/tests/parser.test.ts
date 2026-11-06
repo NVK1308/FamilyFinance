@@ -184,9 +184,9 @@ describe('FamilyFinance Phase 2 — Edge Cases & Regression Tests', () => {
     assert.equal(r1.ngay_giao_dich, '2026-11-03');
     assert.equal(r1.so_tien, 450_000);
     assert.equal(r1.ma_danh_muc, CATEGORY_CODE.SUA);
-    // Phase 4: bỏ hỏi phân bổ — nhiều đối tượng thì để đối tượng null
+    // Phase 4: bỏ hỏi phân bổ; Phase 5b Q8: "2 con" → CAC_CON
     assert.deepEqual(r1.requires_confirmation, []);
-    assert.equal(r1.doi_tuong_thu_huong_id, null);
+    assert.equal(r1.doi_tuong_thu_huong_id, 'CAC_CON');
 
     const r2 = parseVietnameseFinanceMessage('CHI: ngày 01/11/2026 đổ xăng 100k, tiền chồng giữ', {
       senderId: MEMBER_ID.CHONG,

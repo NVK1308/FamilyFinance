@@ -27,7 +27,6 @@ import {
   markFundMoveCancelled,
   markTransferCancelled,
   markTransferConfirmed,
-  sumPendingOutgoing,
   updateMessageStatus,
 } from '../db/repositories/index.ts';
 import type {
@@ -55,7 +54,7 @@ export type TransferReply = 'DA_NHAN' | 'CHUA_NHAN';
 
 export interface TransferReplyResult {
   changed: boolean;
-  // "Đã nhận" sau hạn 7 ngày → không đổi (job Phase 5 chuyển HET_HAN)
+  // "Đã nhận" sau hạn 7 ngày → không đổi (job hết hạn chuyển cả chuyển + yêu cầu sang HET_HAN)
   expired: boolean;
   transfer: ChuyenTienNoiBoRecord;
 }
@@ -71,7 +70,7 @@ export interface FundCancelResult {
 }
 
 // Nhóm giữ tiền của thành viên; chỉ VO/CHONG được chuyển (QUAN_TRI làm lệch số dư nhóm)
-function memberGroup(member: ThanhVienRecord | null): 'VO' | 'CHONG' | null {
+export function memberGroup(member: ThanhVienRecord | null): 'VO' | 'CHONG' | null {
   if (!isActiveMember(member)) {
     return null;
   }
@@ -203,7 +202,7 @@ export class TransferService {
     return { changed: true, expired: false, transfer: after };
   }
 
-  // Người chuyển huỷ khi còn chờ (kể cả đã quá hạn). Đã nhận → không huỷ, chuyển ngược lại (Q2).
+  // Người chuyển huỷ khi còn chờ (kể cả quá hạn mà job chưa chạy). Đã nhận → không huỷ, chuyển ngược lại (Q2).
   async cancelTransfer(transferId: string, nguoiHuyId: MemberId): Promise<TransferCancelResult> {
     const nowIso = this.now().toISOString();
     return this.db.transaction(async (tx) => {
@@ -224,7 +223,7 @@ export class TransferService {
         return { changed: false, transfer: (await getTransferById(tx, transfer.id)) ?? transfer };
       }
       if (transfer.source_message_id) {
-        // Yêu cầu có thể đã HET_HAN (job Phase 5) → chỉ đóng khi còn chờ, chuyển vẫn huỷ được
+        // Dữ liệu cũ có thể có yêu cầu HET_HAN mà chuyển còn chờ → chỉ đóng khi còn chờ, chuyển vẫn huỷ được
         const pending = (await listConfirmationsByMessage(tx, transfer.source_message_id)).find(
           (c) => c.loai_xac_nhan === CONFIRMATION_TYPE.CHUYEN_TIEN && c.trang_thai === CONFIRMATION_STATUS.CHO_XAC_NHAN,
         );
@@ -240,6 +239,10 @@ export class TransferService {
       await this.audit(tx, TABLE_NAME.CHUYEN_TIEN_NOI_BO, transfer.id, AUDIT_ACTION.CANCEL, transfer, after, nguoiHuyId, null, nowIso);
       return { changed: true, transfer: after };
     });
+  }
+
+  getTransfer(id: string): Promise<ChuyenTienNoiBoRecord | null> {
+    return getTransferById(this.db, id);
   }
 
   listPendingTransfers(): Promise<ChuyenTienNoiBoRecord[]> {
@@ -359,13 +362,9 @@ export class TransferService {
 
   // Cờ cảnh báo (Q7), tính sau commit, ngoài transaction: số dư nhóm (đã gồm khoản vừa ghi nếu HOAN_TAT)
   // trừ các chuyển vợ↔chồng còn chờ của thành viên đó. Chưa có số dư ban đầu → không cảnh báo.
-  private async isOverBalance(holder: MoneyHolderId, memberId: MemberId | null, asOf: string): Promise<boolean> {
-    const balances = await new BalanceService(this.db, { now: this.now }).getHolderBalances(asOf);
-    if (balances.status !== 'OK') {
-      return false;
-    }
-    const pending = memberId === null ? 0 : await sumPendingOutgoing(this.db, memberId);
-    return balances.nhom[holder] - pending < 0;
+  // Lỗi khi tính → không cảnh báo (bản ghi đã commit; ném lỗi sẽ làm Telegram gửi lại và người nhận mất tin)
+  private isOverBalance(holder: MoneyHolderId, memberId: MemberId | null, asOf: string): Promise<boolean> {
+    return new BalanceService(this.db, { now: this.now }).isOverBalance(holder, memberId, asOf);
   }
 
   private async audit(

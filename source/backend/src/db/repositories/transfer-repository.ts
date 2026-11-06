@@ -110,6 +110,17 @@ export async function markTransferCancelled(db: DatabaseAdapter, id: string, now
   return res.changes;
 }
 
+// Job hết hạn: chỉ đổi khi còn CHO_XAC_NHAN. Trả 0 nếu bên kia đã xử lý trước.
+export async function markTransferExpired(db: DatabaseAdapter, id: string, nowIso: string): Promise<number> {
+  const version = await db.nextVersion();
+  const res = await db.execute(
+    `UPDATE chuyen_tien_noi_bo SET trang_thai = 'HET_HAN', updated_at = $2, version = $3
+     WHERE id = $1 AND trang_thai = 'CHO_XAC_NHAN' AND deleted_at IS NULL`,
+    [id, nowIso, version],
+  );
+  return res.changes;
+}
+
 // ---------- Nộp / rút quỹ chung (chuyen_quy_chung) ----------
 
 export interface NewFundMoveInput {

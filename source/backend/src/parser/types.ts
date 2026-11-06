@@ -6,6 +6,8 @@ import type {
   MemberId,
   MessageIntent,
   MoneyHolderId,
+  SavingsDirection,
+  SavingsSourceId,
   TransactionType,
   TransferStatus,
 } from '../config/constants.ts';
@@ -28,6 +30,8 @@ export interface ParsedTransactionResult {
   intent: typeof MESSAGE_INTENT_TRANSACTION;
   loai_giao_dich: TransactionType | null;
   so_tien: number | null;
+  // Có 2 số tiền ("3 hay 4 triệu") → so_tien = null
+  so_tien_mo_ho: boolean;
   ma_danh_muc: CategoryCode | string | null;
   nguoi_tao_id: MemberId;
   nguoi_thuc_hien_id: MemberId;
@@ -65,21 +69,41 @@ export interface ParsedFundTransferResult {
   mo_ta: string;
 }
 
+// Hũ tiết kiệm (Phase 5c-1: chỉ tiền)
+export interface ParsedSavingsResult {
+  intent: typeof MESSAGE_INTENT_SAVINGS;
+  chieu: SavingsDirection;
+  thanh_vien_id: MemberId;
+  // Nguồn / đích tiền mặt; null khi khai báo
+  nguon_id: SavingsSourceId | null;
+  so_tien: number | null;
+  so_tien_mo_ho: boolean;
+  ngay: string;
+  ly_do_chua_ho_tro: string | null;
+  mo_ta: string;
+}
+
 export interface ParsedQueryOrOtherResult {
-  intent: Exclude<MessageIntent, 'RECORD_TRANSACTION' | 'INTERNAL_TRANSFER' | 'FUND_TRANSFER'>;
+  intent: Exclude<MessageIntent, 'RECORD_TRANSACTION' | 'INTERNAL_TRANSFER' | 'FUND_TRANSFER' | 'SAVINGS_MOVE'>;
   rawText: string;
   normalizedText: string;
   nguoi_tao_id: MemberId;
   ngay_tham_chieu: string;
+  // UNKNOWN: lý do nhắc (HOI_HAY_GHI, SO_DU_DUNG_LENH) — Phase 5b Q6
+  ly_do: string | null;
+  // QUERY: câu hỏi có kèm số tiền rõ → trả lời kèm gợi ý cách ghi
+  co_so_tien: boolean;
 }
 
 export type ParseResult =
   | ParsedTransactionResult
   | ParsedTransferResult
   | ParsedFundTransferResult
+  | ParsedSavingsResult
   | ParsedQueryOrOtherResult;
 
 const MESSAGE_INTENT_TRANSACTION = 'RECORD_TRANSACTION' as const;
 const MESSAGE_INTENT_TRANSFER = 'INTERNAL_TRANSFER' as const;
 const MESSAGE_INTENT_FUND = 'FUND_TRANSFER' as const;
+const MESSAGE_INTENT_SAVINGS = 'SAVINGS_MOVE' as const;
 

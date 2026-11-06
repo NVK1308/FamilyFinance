@@ -96,3 +96,9 @@ export function matchCategoryAndType(
   };
 }
 
+
+// Danh mục đầu tiên khớp từ khoá (dài nhất trước) — dùng cho câu hỏi thống kê
+export function findCategoryByKeyword(asciiText: string): { code: CategoryCode; scope: CategoryScope; keyword: string } | null {
+  const entry = COMPILED_KEYWORDS.find((e) => e.regex.test(asciiText));
+  return entry ? { code: entry.categoryCode, scope: entry.scope, keyword: entry.normalizedKeyword } : null;
+}

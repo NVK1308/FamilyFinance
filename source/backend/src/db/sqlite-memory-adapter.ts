@@ -36,7 +36,8 @@ const SEED_DIR = path.resolve(currentDir, '../../seeds');
 const SCHEMA_STEPS: ReadonlyArray<{ migration: string; seed?: string }> = [
   { migration: '0001_initial_schema.sqlite.sql', seed: '0001_seed_reference_data.sql' },
   { migration: '0002_giao_dich_chieu_dieu_chinh.sqlite.sql', seed: '0002_seed_lai_cho_vay.sql' },
-  { migration: '0003_chuyen_quy_chung.sqlite.sql' },
+  { migration: '0003_chuyen_quy_chung.sqlite.sql', seed: '0003_seed_cac_con.sql' },
+  { migration: '0004_hu_tiet_kiem.sqlite.sql' },
 ];
 
 export interface SqliteMemoryOptions {

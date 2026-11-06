@@ -41,6 +41,25 @@ export function toVnDate(date: Date): string {
   return VN_DATE_FORMAT.format(date);
 }
 
+// Ngày đầu / cuối tháng (YYYY-MM-DD) chứa thời điểm này theo giờ VN
+export function vnMonthRange(date: Date): { from: string; to: string } {
+  const [y, m] = toVnDate(date).split('-').map(Number) as [number, number];
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const mm = String(m).padStart(2, '0');
+  return { from: `${y}-${mm}-01`, to: `${y}-${mm}-${String(last).padStart(2, '0')}` };
+}
+
+// So sánh chuỗi không dừng sớm ở ký tự khác đầu tiên (chống đoán secret theo thời gian)
+export function constantTimeEqual(a: string, b: string): boolean {
+  const ea = new TextEncoder().encode(a);
+  const eb = new TextEncoder().encode(b);
+  let diff = ea.length ^ eb.length;
+  for (let i = 0; i < ea.length; i += 1) {
+    diff |= ea[i]! ^ (eb[i % Math.max(eb.length, 1)] ?? 0);
+  }
+  return diff === 0;
+}
+
 export function addDaysIso(date: Date, days: number): string {
   return new Date(date.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
 }

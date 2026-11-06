@@ -358,9 +358,10 @@ for (const backend of BACKENDS) {
         [MEMBER_ID.VO, 'đi chợ 200k lấy quỹ chung', 'RECORDED'],
         [MEMBER_ID.VO, 'lấy quỹ chung 200k đi chợ', 'RECORDED'],
         [MEMBER_ID.CHONG, 'lương 10tr bỏ vào quỹ chung', 'RECORDED'],
-        [MEMBER_ID.CHONG, 'lấy quỹ chung 1tr trả nợ', 'PENDING'],
-        [MEMBER_ID.CHONG, 'lấy quỹ chung 300k mua bánh', 'PENDING'],
-        [MEMBER_ID.CHONG, 'chi 500k lấy quỹ chung', 'PENDING'],
+        // Phase 5: nợ → ghi chú (Q6); chưa rõ danh mục → ghi Chi khác (Q4)
+        [MEMBER_ID.CHONG, 'lấy quỹ chung 1tr trả nợ', 'IGNORED'],
+        [MEMBER_ID.CHONG, 'lấy quỹ chung 300k mua bánh', 'RECORDED'],
+        [MEMBER_ID.CHONG, 'chi 500k lấy quỹ chung', 'RECORDED'],
       ];
       for (const [sender, text, kind] of cases) {
         const out = await env.txs.recordFromText(msg(sender, text));
@@ -418,12 +419,19 @@ for (const backend of BACKENDS) {
       assert.equal((await sendFund(env, MEMBER_ID.CHONG, 'bỏ vào quỹ chung 1tr')).canhBaoVuotSoDu, false);
     });
 
-    it('A1: nhiều đối tượng → ghi CHI ngay, đối tượng null, không hỏi phân bổ', async () => {
-      for (const text of ['CHI: mua đồ ăn cho các con 500k', 'mua sữa cho con gái và con trai 400k', 'CHI: hôm qua mua sữa cho 2 con 450k']) {
+    // Phase 5b Q8: "các con / 2 con / con gái và con trai" → CAC_CON; đối tượng khác lẫn vào → null
+    it('A1: nhiều đối tượng → ghi CHI ngay, không hỏi phân bổ; các con → CAC_CON', async () => {
+      const cases: Array<[string, string | null]> = [
+        ['CHI: mua đồ ăn cho các con 500k', 'CAC_CON'],
+        ['mua sữa cho con gái và con trai 400k', 'CAC_CON'],
+        ['CHI: hôm qua mua sữa cho 2 con 450k', 'CAC_CON'],
+        ['mua đồ cho con gái và cho vợ 300k', null],
+      ];
+      for (const [text, expected] of cases) {
         const out = await env.txs.recordFromText(msg(MEMBER_ID.VO, text));
         assert.equal(out.kind, 'RECORDED', text);
         if (out.kind !== 'RECORDED') continue;
-        assert.equal(out.transaction.doi_tuong_thu_huong_id, null, text);
+        assert.equal(out.transaction.doi_tuong_thu_huong_id, expected, text);
         assert.equal(out.confirmations.length, 0, text);
       }
       assert.equal(await count(env.db, 'yeu_cau_xac_nhan'), 0);

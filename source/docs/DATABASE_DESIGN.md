@@ -218,6 +218,15 @@ erDiagram
 - `thanh_vien_id` = người thao tác; `nhom_id` (`VO`/`CHONG`) = nhóm giữ tiền lúc ghi (snapshot, không suy lại qua `vai_tro`).
 - Số dư nhóm: NOP → nhóm −X, `QUY_CHUNG` +X; RUT ngược lại. Không đổi tổng gia đình, không vào THU/CHI. `idempotency_key` UNIQUE (`tg:<update_id>`).
 
+### 3.1c. Bảng `hu_tiet_kiem` (migration 0004 — bảng thứ 18, Phase 5c)
+- Hũ tiết kiệm = **tài sản chung** (không thuộc vợ/chồng), không phải tiền mặt. `chieu`: `KHAI_BAO` (tài sản có sẵn, không trừ ai) / `NOP` (bỏ vào) / `RUT` (lấy ra). Ghi ngay `HOAN_TAT`, huỷ → `DA_HUY`.
+- `loai_tai_san`: `TIEN` (5c-1) / `VANG` (5c-2). Vàng lưu `so_luong_phan` số nguyên (1 chỉ = 10 phân, 1 lượng = 100 phân) — không dùng NUMERIC.
+- `so_tien` = giá trị lúc giao dịch (NULL được với vàng không giá). `nguon_id` (`VO`/`CHONG`/`QUY_CHUNG`) = nhóm tiền mặt bị trừ (NOP) / được cộng (RUT); NULL khi khai báo hoặc không có tiền.
+- CHECK: TIEN phải có `so_tien`, không có `so_luong_phan`; VANG phải có `so_luong_phan`; KHAI_BAO không có nguồn; có nguồn ⇔ có tiền (trừ KHAI_BAO).
+- Số dư tiền mặt (cả 2 cách tính): dòng NOP/RUT `HOAN_TAT` có `nguon_id` + `so_tien` → nguồn −/+ `so_tien` (cùng 1 bộ lọc để bất biến giữ). Không vào THU/CHI, tổng kỳ, đối soát.
+- Hũ (tiền) = Σ KHAI_BAO + Σ NOP − Σ RUT (loại TIEN, đến ngày hỏi). `/sodu` hiện thêm hũ + "Tổng tài sản (ước tính)" khi hũ ≠ 0.
+- Đồng bộ desktop (Phase 7): có trong `syncTablesOrder`.
+
 ### 3.2. Ràng buộc trên bảng `chuyen_tien_noi_bo`
 - `nguoi_chuyen_id <> nguoi_nhan_id`: Không thể tự chuyển cho chính mình.
 - `so_tien > 0`.

@@ -1,17 +1,59 @@
 import assert from 'node:assert/strict';
-import { MEMBER_ID, type MemberId } from '../../src/config/constants.ts';
+import { CONFIRMATION_TYPE, MEMBER_ID, MESSAGE_STATUS, type ConfirmationType, type MemberId } from '../../src/config/constants.ts';
+import { insertConfirmation, updateMessageStatus } from '../../src/db/repositories/index.ts';
 import { SqliteMemoryAdapter } from '../../src/db/sqlite-memory-adapter.ts';
-import { toSafeNumber, type DatabaseAdapter, type SqlParam } from '../../src/db/types.ts';
+import {
+  toSafeNumber,
+  type DatabaseAdapter,
+  type SqlParam,
+  type TinNhanGocRecord,
+  type YeuCauXacNhanRecord,
+} from '../../src/db/types.ts';
+import { parseVietnameseFinanceMessage } from '../../src/parser/index.ts';
 import {
   BalanceService,
   DebtService,
   DomainError,
   TransactionService,
   TransferService,
+  insertIncomingMessage,
+  newId,
+  requireMessage,
   type DomainErrorCode,
   type IncomingMessage,
 } from '../../src/services/index.ts';
 import { PgliteTestAdapter } from './pglite-adapter.ts';
+
+// Phase 5 không còn tạo yêu cầu GIAO_DICH_MO_HO / DANH_MUC_MOI từ tin nhắn. Yêu cầu cũ vẫn có thể còn trong DB:
+// tạo trực tiếp (tin CHO_XAC_NHAN + yêu cầu, hạn 7 ngày) để giữ kiểm resolveConfirmation.
+export async function legacyPending(
+  env: TestEnv,
+  sender: MemberId,
+  text: string,
+  type: ConfirmationType = CONFIRMATION_TYPE.GIAO_DICH_MO_HO,
+): Promise<{ message: TinNhanGocRecord; confirmations: YeuCauXacNhanRecord[] }> {
+  const m = msg(sender, text);
+  const parsed = parseVietnameseFinanceMessage(text, { senderId: sender, referenceDate: '2026-11-04' });
+  const nowIso = '2026-11-04T03:00:00.000Z';
+  return env.db.transaction(async (tx) => {
+    const messageId = await insertIncomingMessage(tx, m, sender, nowIso);
+    if (!messageId) {
+      throw new Error('update trùng');
+    }
+    const confirmation = await insertConfirmation(tx, {
+      id: newId('YC'),
+      source_message_id: messageId,
+      nguoi_tao_id: sender,
+      nguoi_can_xac_nhan_id: sender,
+      loai_xac_nhan: type,
+      du_lieu_de_xuat: { parsed, ly_do: 'YEU_CAU_CU' },
+      expires_at: '2026-11-11T03:00:00.000Z',
+      nowIso,
+    });
+    await updateMessageStatus(tx, messageId, MESSAGE_STATUS.CHO_XAC_NHAN, nowIso);
+    return { message: await requireMessage(tx, messageId), confirmations: [confirmation] };
+  });
+}
 
 export const TELEGRAM_ID: Record<MemberId, number> = {
   [MEMBER_ID.CHONG]: 100000001,

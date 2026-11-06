@@ -76,3 +76,17 @@ export async function closeConfirmation(
   const res = await db.execute(sql, params);
   return res.changes;
 }
+
+// Yêu cầu còn chờ đã tới hạn (expires_at <= now), cũ nhất trước
+export function listOverdueConfirmations(
+  db: DatabaseAdapter,
+  nowIso: string,
+  limit: number,
+): Promise<YeuCauXacNhanRecord[]> {
+  return db.query<YeuCauXacNhanRecord>(
+    `SELECT * FROM yeu_cau_xac_nhan
+     WHERE trang_thai = 'CHO_XAC_NHAN' AND deleted_at IS NULL AND expires_at <= $1
+     ORDER BY expires_at, id LIMIT $2`,
+    [nowIso, limit],
+  );
+}

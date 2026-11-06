@@ -1,5 +1,6 @@
 import type {
   AdjustmentDirection,
+  AssetType,
   AuditAction,
   BeneficiaryId,
   ConfirmationStatus,
@@ -12,6 +13,8 @@ import type {
   MemberId,
   MessageStatus,
   MoneyHolderId,
+  SavingsDirection,
+  SavingsSourceId,
   TableName,
   TransactionStatus,
   TransactionType,
@@ -183,6 +186,25 @@ export interface ChuyenTienNoiBoRecord {
   trang_thai: TransferStatus;
   ngay_xac_nhan: string | null;
   telegram_user_id_xac_nhan: number | null;
+  source_message_id: string | null;
+  idempotency_key: string;
+  ghi_chu: string | null;
+  created_at: string;
+  updated_at: string;
+  version: number;
+  deleted_at: string | null;
+}
+
+export interface HuTietKiemRecord {
+  id: string;
+  chieu: SavingsDirection;
+  loai_tai_san: AssetType;
+  so_luong_phan: number | null;
+  so_tien: number | null;
+  nguon_id: SavingsSourceId | null;
+  thanh_vien_id: MemberId;
+  ngay: string;
+  trang_thai: FundMoveStatus;
   source_message_id: string | null;
   idempotency_key: string;
   ghi_chu: string | null;

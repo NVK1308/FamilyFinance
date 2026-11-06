@@ -21,6 +21,9 @@ import {
   sumTransactionsByHolder,
   sumTransactionsByType,
   sumFundMovesByGroup,
+  sumPendingOutgoing,
+  sumSavingsCash,
+  sumSavingsCashByHolder,
   sumTransfersByRole,
   updateInitialBalance,
 } from '../db/repositories/index.ts';
@@ -178,6 +181,10 @@ export class BalanceService {
       nhom[f.nhom] -= sign * f.total;
       nhom.QUY_CHUNG += sign * f.total;
     }
+    // Hũ tiết kiệm: bỏ vào → nguồn giảm, lấy ra → nguồn tăng (không vào thu/chi)
+    for (const h of await sumSavingsCashByHolder(this.db, gate.initial.ngayApDung, asOf)) {
+      nhom[h.nguon] += h.chieu === 'RUT' ? h.total : -h.total;
+    }
     const tong = HOLDERS.reduce((sum, h) => sum + nhom[h], 0);
     return { status: 'OK', asOf, ngayApDung: gate.initial.ngayApDung, nhom, tong };
   }
@@ -212,7 +219,33 @@ export class BalanceService {
           break;
       }
     }
+    // Hũ tiết kiệm: cùng bộ lọc dòng có tiền với cách 1 → bất biến giữ
+    for (const h of await sumSavingsCashByHolder(this.db, gate.initial.ngayApDung, asOf)) {
+      soDu += h.chieu === 'RUT' ? h.total : -h.total;
+    }
     return { status: 'OK', asOf, ngayApDung: gate.initial.ngayApDung, soDu };
+  }
+
+  // Cờ cảnh báo (Q7, quỹ chung / hũ / chuyển): nhóm âm sau khi trừ các chuyển vợ↔chồng còn chờ của thành viên.
+  // Chưa có số dư ban đầu → không cảnh báo. Lỗi → không cảnh báo (gọi sau commit; ném lỗi làm Telegram gửi lại).
+  async isOverBalance(holder: MoneyHolderId, memberId: MemberId | null, asOf: string): Promise<boolean> {
+    try {
+      const balances = await this.getHolderBalances(asOf);
+      if (balances.status !== 'OK') {
+        return false;
+      }
+      const pending = memberId === null ? 0 : await sumPendingOutgoing(this.db, memberId);
+      return balances.nhom[holder] - pending < 0;
+    } catch (error) {
+      console.error('isOverBalance lỗi, bỏ cảnh báo', error);
+      return false;
+    }
+  }
+
+  // Hũ tiết kiệm (tài sản chung, không phải tiền mặt): tiền đến ngày asOf. Không cần số dư ban đầu.
+  async getSavingsJar(asOf: string): Promise<{ tien: number; soDong: number }> {
+    assertDate(asOf, 'asOf');
+    return sumSavingsCash(this.db, asOf);
   }
 
   // Tổng kỳ: VAY/TRA_NO/DIEU_CHINH/chuyển nội bộ không vào thu/chi

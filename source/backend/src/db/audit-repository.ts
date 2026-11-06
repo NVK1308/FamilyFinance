@@ -1,5 +1,19 @@
 import type { AuditAction, MemberId, TableName } from '../config/constants.ts';
-import type { DatabaseAdapter, LichSuChinhSuaRecord } from './types.ts';
+import { toSafeNumber, type DatabaseAdapter, type LichSuChinhSuaRecord } from './types.ts';
+
+// Số lần ghi lịch sử của 1 bản ghi theo lý do (vd đếm "Chưa nhận")
+export async function countAuditByReason(
+  db: DatabaseAdapter,
+  tenBang: TableName,
+  banGhiId: string,
+  lyDo: string,
+): Promise<number> {
+  const row = await db.queryOne<{ c: unknown }>(
+    'SELECT COUNT(*) AS c FROM lich_su_chinh_sua WHERE ten_bang = $1 AND ban_ghi_id = $2 AND ly_do = $3',
+    [tenBang, banGhiId, lyDo],
+  );
+  return toSafeNumber(row?.c);
+}
 
 export interface CreateAuditLogInput {
   ten_bang: TableName;

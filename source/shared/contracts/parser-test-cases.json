@@ -170,7 +170,7 @@
       }
     },
     {
-      "id": "TC_11_V4_NHIEU_DOI_TUONG_KHONG_PHAN_BO",
+      "id": "TC_11_V4_CAC_CON",
       "senderId": "VO",
       "rawText": "CHI: mua đồ ăn cho các con 500k",
       "expected": {
@@ -181,7 +181,7 @@
         "nguoi_tao_id": "VO",
         "nguoi_thuc_hien_id": "VO",
         "nguoi_giu_tien_id": "VO",
-        "doi_tuong_thu_huong_id": null,
+        "doi_tuong_thu_huong_id": "CAC_CON",
         "requires_confirmation": [],
         "cashflow_impact": -500000
       }

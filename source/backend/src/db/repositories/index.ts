@@ -6,3 +6,5 @@ export * from './initial-balance-repository.ts';
 export * from './reference-repository.ts';
 export * from './balance-queries.ts';
 export * from './transfer-repository.ts';
+export * from './query-repository.ts';
+export * from './savings-repository.ts';

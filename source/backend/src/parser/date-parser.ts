@@ -1,7 +1,7 @@
 import { normalizeWhitespace } from './normalizer.ts';
 import type { ParseContext } from './types.ts';
 
-function addDaysToIsoDate(isoDate: string, deltaDays: number): string {
+export function addDaysToIsoDate(isoDate: string, deltaDays: number): string {
   const parts = isoDate.split('-');
   const year = Number(parts[0]);
   const month = Number(parts[1]);

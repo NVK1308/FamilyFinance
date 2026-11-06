@@ -100,3 +100,20 @@ export function extractAmountVnd(ctx: ParseContext): AmountParseResult {
   };
 }
 
+
+// "Có số tiền rõ" (Phase 5b 3.2c): số có đơn vị, hoặc số trần >= 10.000 (năm 2026, "tháng 10" không tính).
+// Hàm thuần, không sửa ctx.
+export function hasClearAmount(text: string): boolean {
+  if (ALTERNATIVE_AMOUNT_REGEX.test(text)) {
+    return true;
+  }
+  const regex = new RegExp(AMOUNT_TOKEN_REGEX.source, 'gi');
+  for (let m = regex.exec(text); m !== null; m = regex.exec(text)) {
+    const value = parseSingleMatch(m);
+    const hasUnit = m[2] !== undefined || m[4] !== undefined || /(?:d|vnd)$/i.test(m[0]);
+    if (value !== null && (hasUnit || value >= 10_000)) {
+      return true;
+    }
+  }
+  return false;
+}

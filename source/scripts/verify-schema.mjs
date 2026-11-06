@@ -9,6 +9,8 @@ const postgres0002Path = `${root}/backend/migrations/0002_giao_dich_chieu_dieu_c
 const seed0002Path = `${root}/backend/seeds/0002_seed_lai_cho_vay.sql`;
 const sqlite0003Path = `${root}/desktop/FamilyFinance.Data/Migrations/0003_chuyen_quy_chung.sqlite.sql`;
 const postgres0003Path = `${root}/backend/migrations/0003_chuyen_quy_chung.postgres.sql`;
+const sqlite0004Path = `${root}/desktop/FamilyFinance.Data/Migrations/0004_hu_tiet_kiem.sqlite.sql`;
+const postgres0004Path = `${root}/backend/migrations/0004_hu_tiet_kiem.postgres.sql`;
 const postgresSchemaPath = `${root}/backend/migrations/0001_initial_schema.postgres.sql`;
 const seedPath = `${root}/backend/seeds/0001_seed_reference_data.sql`;
 const contractsPath = `${root}/shared/contracts/domain-contracts.json`;
@@ -120,10 +122,39 @@ for (const part of ["CHECK (chieu IN ('NOP', 'RUT'))", "CHECK (nhom_id IN ('VO',
 const syncOrder = contracts.syncTablesOrder;
 assert.ok(syncOrder.indexOf('chuyen_quy_chung') > syncOrder.indexOf('chuyen_tien_noi_bo'), 'syncTablesOrder thiếu chuyen_quy_chung');
 
+// 7. Migration 0004: bảng hu_tiet_kiem (18 bảng), CHECK theo loại tài sản / chiều / nguồn, chạy lại được
+const sql0004 = fs.readFileSync(sqlite0004Path, 'utf8');
+db.exec(sql0004);
+db.exec(sql0004);
+const tables0004 = db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(r => r.name);
+assert.equal(tables0004.length, 18, `Sau 0004 phải có 18 bảng, có ${tables0004.length}`);
+const insertHu = (id, chieu, loai, phan, soTien, nguon) => db.prepare(`
+  INSERT INTO hu_tiet_kiem (id, chieu, loai_tai_san, so_luong_phan, so_tien, nguon_id, thanh_vien_id, ngay, trang_thai, idempotency_key, created_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, 'VO', '2026-11-06', 'HOAN_TAT', ?, '2026-11-06T00:00:00Z', '2026-11-06T00:00:00Z')
+`).run(id, chieu, loai, phan, soTien, nguon, id);
+insertHu('H1', 'NOP', 'TIEN', null, 1000, 'VO');
+insertHu('H2', 'KHAI_BAO', 'TIEN', null, 1000, null);
+insertHu('H3', 'NOP', 'VANG', 10, null, null); // vàng không giá: không trừ ai
+assert.throws(() => insertHu('H4', 'NOP', 'TIEN', null, null, 'VO'), /CHECK constraint failed/); // tiền phải có số tiền
+assert.throws(() => insertHu('H5', 'NOP', 'TIEN', 10, 1000, 'VO'), /CHECK constraint failed/); // tiền không có số lượng
+assert.throws(() => insertHu('H6', 'NOP', 'VANG', null, 1000, 'VO'), /CHECK constraint failed/); // vàng phải có số lượng
+assert.throws(() => insertHu('H7', 'KHAI_BAO', 'TIEN', null, 1000, 'VO'), /CHECK constraint failed/); // khai báo không có nguồn
+assert.throws(() => insertHu('H8', 'NOP', 'TIEN', null, 1000, null), /CHECK constraint failed/); // có tiền phải có nguồn
+assert.throws(() => insertHu('H9', 'NOP', 'TIEN', null, 1000, 'CHUA_XAC_DINH'), /CHECK constraint failed/);
+const pg0004 = fs.readFileSync(postgres0004Path, 'utf8');
+const pgTables0004 = [...pg0004.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g)].map(m => m[1]);
+assert.deepEqual([...pgTables, ...pgTables0003, ...pgTables0004].sort(), tables0004, 'Bảng Postgres (0001+0003+0004) phải khớp SQLite');
+for (const part of ["CHECK (chieu IN ('KHAI_BAO', 'NOP', 'RUT'))", "CHECK (loai_tai_san IN ('TIEN', 'VANG'))", 'idempotency_key TEXT NOT NULL UNIQUE', "DEFAULT nextval('sync_version_seq')"]) {
+  assert.ok(pg0004.includes(part), `0004 Postgres thiếu: ${part}`);
+}
+assert.ok(syncOrder.includes('hu_tiet_kiem'), 'syncTablesOrder thiếu hu_tiet_kiem');
+assert.ok(contracts.enums.MessageIntent.includes('SAVINGS_MOVE'), 'MessageIntent thiếu SAVINGS_MOVE');
+
 console.log('✅ Schema & Contracts Verification PASSED!');
 console.log('   - Tables verified (PostgreSQL & SQLite 1:1):', tables.length);
 console.log(`   - Seed data verified: ${memberCount} members, ${categoryCount} categories, ${keywordCount} keywords, ${beneficiaryCount} beneficiaries`);
 console.log('   - Integrity constraints verified: positive amount, distinct transfer parties, valid money holder');
+console.log('   - Migration 0004 verified: hu_tiet_kiem (18 bảng), CHECK tiền/vàng/khai báo/nguồn, chạy lại được');
 console.log('   - Migration 0003 verified: chuyen_quy_chung (17 bảng), CHECK chieu/nhom_id/so_tien/trang_thai, chạy lại được');
 console.log('   - Migration 0002 verified: chieu_dieu_chinh + HOAN_TAT có người giữ (SQLite chạy thật, Postgres kiểm tên constraint)');
 

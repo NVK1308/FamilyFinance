@@ -1,6 +1,7 @@
 import {
   CONFIRMATION_TYPE,
   MESSAGE_INTENT,
+  SAVINGS_DIRECTION,
   TRANSACTION_TYPE,
   TRANSFER_STATUS,
   type ConfirmationType,
@@ -13,6 +14,7 @@ import { detectFundTransfer } from './fund-detector.ts';
 import { classifyIntent } from './intent-classifier.ts';
 import { createParseContext } from './normalizer.ts';
 import { resolveRoles } from './role-resolver.ts';
+import { detectSavings } from './savings-detector.ts';
 import type { ParseOptions, ParseResult } from './types.ts';
 
 function computeCashflowImpact(type: TransactionType | null, amount: number | null): number {
@@ -52,6 +54,8 @@ export function parseVietnameseFinanceMessage(
       normalizedText: ctx.normalizedText,
       nguoi_tao_id: ctx.senderId,
       ngay_tham_chieu: ctx.referenceDate,
+      ly_do: classification.reason ?? null,
+      co_so_tien: classification.hasAmount ?? false,
     };
   }
 
@@ -98,7 +102,25 @@ export function parseVietnameseFinanceMessage(
   const transactionDate = extractTransactionDate(ctx);
   const amountResult = extractAmountVnd(ctx);
 
-  // 3a. Nộp / rút quỹ chung: chỉ khi câu không có tiền tố loại và không chứa gì khác
+  // 3a. Hũ tiết kiệm (trước quỹ chung: "lấy quỹ chung bỏ hũ" là bỏ hũ, nguồn quỹ chung)
+  if (classification.explicitTransactionType === null) {
+    const savings = detectSavings(ctx.workingAsciiText, ctx.senderId);
+    if (savings) {
+      return {
+        intent: MESSAGE_INTENT.SAVINGS_MOVE,
+        chieu: savings.chieu,
+        thanh_vien_id: ctx.senderId,
+        nguon_id: savings.chieu === SAVINGS_DIRECTION.KHAI_BAO ? null : (savings.nguon ?? ctx.senderId),
+        so_tien: amountResult.isAmbiguous ? null : amountResult.amount,
+        so_tien_mo_ho: amountResult.isAmbiguous,
+        ngay: transactionDate,
+        ly_do_chua_ho_tro: savings.unsupportedReason,
+        mo_ta: ctx.rawText,
+      };
+    }
+  }
+
+  // 3b. Nộp / rút quỹ chung: chỉ khi câu không có tiền tố loại và không chứa gì khác
   if (classification.explicitTransactionType === null) {
     const fund = detectFundTransfer(ctx.workingAsciiText, ctx.senderId);
     if (fund) {
@@ -136,10 +158,25 @@ export function parseVietnameseFinanceMessage(
     confirmations.push(CONFIRMATION_TYPE.DOI_TUONG_MOI);
   }
 
+  // Q6: câu có tiền chỉ khớp luật hỏi yếu ("tiền ăn 50k?") → ghi khi nhận ra loại hoặc danh mục, không thì nhắc
+  const typeKnown = finalType !== null && !confirmations.includes(CONFIRMATION_TYPE.GIAO_DICH_MO_HO);
+  if (classification.weakQuestion && !typeKnown && categoryMatch.categoryCode === null) {
+    return {
+      intent: MESSAGE_INTENT.UNKNOWN,
+      rawText: ctx.rawText,
+      normalizedText: ctx.normalizedText,
+      nguoi_tao_id: ctx.senderId,
+      ngay_tham_chieu: ctx.referenceDate,
+      ly_do: 'HOI_HAY_GHI',
+      co_so_tien: true,
+    };
+  }
+
   return {
     intent: MESSAGE_INTENT.RECORD_TRANSACTION,
     loai_giao_dich: finalType,
     so_tien: amountResult.amount,
+    so_tien_mo_ho: amountResult.isAmbiguous,
     ma_danh_muc: categoryMatch.categoryCode,
     nguoi_tao_id: roles.nguoi_tao_id,
     nguoi_thuc_hien_id: roles.nguoi_thuc_hien_id,

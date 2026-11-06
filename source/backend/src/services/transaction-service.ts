@@ -1,6 +1,7 @@
 import {
   ADJUSTMENT_DIRECTION,
   AUDIT_ACTION,
+  CATEGORY_CODE,
   CONFIRMATION_EXPIRY_DAYS,
   CONFIRMATION_STATUS,
   CONFIRMATION_TYPE,
@@ -34,6 +35,7 @@ import {
   softDeleteDebtHistoryByTransaction,
   sumLoanLedger,
   updateMessageStatus,
+  updateTransactionCategory,
 } from '../db/repositories/index.ts';
 import type {
   ChuyenTienNoiBoRecord,
@@ -66,6 +68,7 @@ import {
   type IncomingMessage,
   type RecordOutcome,
 } from './message-outcome.ts';
+import { SavingsService } from './savings-service.ts';
 import { TransferService } from './transfer-service.ts';
 
 // Dữ liệu người dùng bổ sung khi trả lời câu hỏi lại (GIAO_DICH_MO_HO / DANH_MUC_MOI)
@@ -107,13 +110,6 @@ const EXPLICIT_TYPES: readonly TransactionType[] = [
   TRANSACTION_TYPE.DIEU_CHINH,
 ];
 
-// Q8: nợ và điều chỉnh từ tin nhắn chưa ghi, chỉ hỏi lại
-const NOT_FROM_MESSAGE_TYPES: readonly TransactionType[] = [
-  TRANSACTION_TYPE.VAY,
-  TRANSACTION_TYPE.TRA_NO,
-  TRANSACTION_TYPE.DIEU_CHINH,
-];
-
 // Yêu cầu chặn ghi giao dịch tới khi người dùng trả lời (Q9)
 const BLOCKING_TYPES: readonly ConfirmationType[] = [
   CONFIRMATION_TYPE.GIAO_DICH_MO_HO,
@@ -148,6 +144,73 @@ interface ValidatedTransaction {
 
 function categoryFits(scope: 'THU' | 'CHI' | 'CA_HAI', loai: TransactionType): boolean {
   return scope === 'CA_HAI' || scope === loai;
+}
+
+function isThuChi(loai: TransactionType): loai is 'THU' | 'CHI' {
+  return loai === TRANSACTION_TYPE.THU || loai === TRANSACTION_TYPE.CHI;
+}
+
+// Danh mục nợ không hiện trong bàn phím chọn danh mục (Q6)
+export const KEYBOARD_EXCLUDED_CATEGORIES: readonly string[] = [CATEGORY_CODE.THU_HOI_NO, CATEGORY_CODE.NO_CUA_ANH];
+const OTHER_CATEGORY = { THU: CATEGORY_CODE.THU_KHAC, CHI: CATEGORY_CODE.CHI_KHAC } as const;
+const DEBT_WORD = /(^|[^\p{L}\p{N}])nợ(?=$|[^\p{L}\p{N}])/u;
+
+// 3.6: câu nợ → chỉ lưu ghi chú. NO_CUA_ANH, LAI_VAY, LAI_CHO_VAY vẫn là thu/chi thường (contract TC_03/TC_04).
+export function isDebtNote(parsed: ParsedTransactionResult): boolean {
+  const type = parsed.loai_giao_dich;
+  const code = parsed.ma_danh_muc;
+  if (type === TRANSACTION_TYPE.LAI_VAY || code === CATEGORY_CODE.NO_CUA_ANH || code === CATEGORY_CODE.LAI_CHO_VAY) {
+    return false;
+  }
+  if (type === TRANSACTION_TYPE.VAY || type === TRANSACTION_TYPE.TRA_NO || code === CATEGORY_CODE.THU_HOI_NO) {
+    return true;
+  }
+  return DEBT_WORD.test(parsed.mo_ta.normalize('NFC').toLowerCase());
+}
+
+// Không tiền, không loại, không danh mục ("ok", "abc") → không phải tin ghi chép, không lưu
+function isEmptyTransaction(parsed: ParsedTransactionResult): boolean {
+  return (
+    parsed.so_tien === null &&
+    !parsed.so_tien_mo_ho &&
+    parsed.loai_giao_dich === null &&
+    parsed.ma_danh_muc === null &&
+    !isDebtNote(parsed)
+  );
+}
+
+// Lý do chỉ lưu tin DA_BO_QUA (null = ghi được)
+function skipReason(parsed: ParsedTransactionResult): string | null {
+  if (isDebtNote(parsed)) {
+    return 'GHI_CHU_NO';
+  }
+  if (parsed.loai_giao_dich === TRANSACTION_TYPE.DIEU_CHINH) {
+    return 'DIEU_CHINH_CHUA_HO_TRO_CHAT';
+  }
+  if (parsed.so_tien === null) {
+    return parsed.so_tien_mo_ho ? 'SO_TIEN_MO_HO' : 'THIEU_SO_TIEN';
+  }
+  return null;
+}
+
+// Q4: chưa rõ loại → CHI; danh mục chưa rõ / lệch loại → Chi khác / Thu khác. chonDanhMuc = hiện nút đổi.
+async function resolveCategory(
+  tx: DatabaseAdapter,
+  parsed: ParsedTransactionResult,
+): Promise<{ loai: TransactionType; maDanhMuc: string | null; chonDanhMuc: boolean }> {
+  const typeKnown = parsed.loai_giao_dich !== null && !parsed.requires_confirmation.includes(CONFIRMATION_TYPE.GIAO_DICH_MO_HO);
+  let loai: TransactionType = parsed.loai_giao_dich ?? TRANSACTION_TYPE.CHI;
+  if (!isThuChi(loai)) {
+    return { loai, maDanhMuc: null, chonDanhMuc: false };
+  }
+  const category = parsed.ma_danh_muc ? await getActiveCategoryByCode(tx, parsed.ma_danh_muc) : null;
+  if (category && !typeKnown && category.loai_giao_dich === TRANSACTION_TYPE.THU) {
+    loai = TRANSACTION_TYPE.THU;
+  }
+  if (category && categoryFits(category.loai_giao_dich, loai)) {
+    return { loai, maDanhMuc: category.ma_danh_muc, chonDanhMuc: !typeKnown };
+  }
+  return { loai, maDanhMuc: OTHER_CATEGORY[loai], chonDanhMuc: true };
 }
 
 // Kiểm dữ liệu một giao dịch HOAN_TAT (không phải nợ) trước khi ghi
@@ -256,11 +319,13 @@ export class TransactionService {
   private readonly db: DatabaseAdapter;
   private readonly now: () => Date;
   private readonly transfers: TransferService;
+  private readonly savings: SavingsService;
 
   constructor(db: DatabaseAdapter, options?: ServiceOptions) {
     this.db = db;
     this.now = resolveClock(options);
     this.transfers = new TransferService(db, options);
+    this.savings = new SavingsService(db, options);
   }
 
   // Tin nhắn thô: kiểm người gửi, parse theo ngày VN, rồi ghi giao dịch / chuyển tiền / quỹ chung.
@@ -280,7 +345,10 @@ export class TransactionService {
     if (parsed.intent === MESSAGE_INTENT.FUND_TRANSFER) {
       return this.transfers.recordFundFromParsed(msg, parsed, member);
     }
-    if (parsed.intent !== MESSAGE_INTENT.RECORD_TRANSACTION) {
+    if (parsed.intent === MESSAGE_INTENT.SAVINGS_MOVE) {
+      return this.savings.recordFromParsed(msg, parsed, member);
+    }
+    if (parsed.intent !== MESSAGE_INTENT.RECORD_TRANSACTION || isEmptyTransaction(parsed)) {
       return { kind: 'NOT_TRANSACTION', parsed };
     }
     return this.recordFromParsed(msg, parsed);
@@ -304,44 +372,22 @@ export class TransactionService {
           return loadExistingOutcome(tx, msg.updateId);
         }
 
-        const blocking = await this.findBlockingReasons(tx, parsed);
-        const expiresAt = addDaysIso(now, CONFIRMATION_EXPIRY_DAYS);
-        if (blocking.length > 0) {
-          const confirmations: YeuCauXacNhanRecord[] = [];
-          for (const b of blocking) {
-            confirmations.push(
-              await insertConfirmation(tx, {
-                id: newId('YC'),
-                source_message_id: messageId,
-                nguoi_tao_id: member.id,
-                nguoi_can_xac_nhan_id: member.id,
-                loai_xac_nhan: b.type,
-                du_lieu_de_xuat: { parsed, ly_do: b.reason },
-                expires_at: expiresAt,
-                nowIso,
-              }),
-            );
-          }
-          await updateMessageStatus(tx, messageId, MESSAGE_STATUS.CHO_XAC_NHAN, nowIso);
-          return {
-            kind: 'PENDING',
-            duplicate: false,
-            message: await requireMessage(tx, messageId),
-            confirmations,
-          };
+        // Phase 5: không còn hỏi lại từ tin nhắn — ghi chú nợ / thiếu tiền → bỏ qua, chưa rõ danh mục → Khác (Q4, Q6)
+        const skip = skipReason(parsed);
+        if (skip !== null) {
+          return ignoreMessage(tx, messageId, skip, nowIso);
         }
+        const expiresAt = addDaysIso(now, CONFIRMATION_EXPIRY_DAYS);
+        const resolved = await resolveCategory(tx, parsed);
 
         // Q2: parser luôn gán người giữ tiền; null ở đây là lỗi lập trình
         if (!parsed.nguoi_giu_tien_id) {
           throw new Error('Parser trả nguoi_giu_tien_id null cho giao dịch hoàn tất');
         }
         const v = await validateCompletedTransaction(tx, {
-          loai: parsed.loai_giao_dich as TransactionType,
+          loai: resolved.loai,
           soTien: parsed.so_tien as number,
-          maDanhMuc:
-            parsed.loai_giao_dich === TRANSACTION_TYPE.THU || parsed.loai_giao_dich === TRANSACTION_TYPE.CHI
-              ? parsed.ma_danh_muc
-              : null,
+          maDanhMuc: resolved.maDanhMuc,
           nguoiThucHienId: parsed.nguoi_thuc_hien_id,
           nguoiGiuTienId: parsed.nguoi_giu_tien_id,
           doiTuongThuHuongId: parsed.doi_tuong_thu_huong_id,
@@ -377,9 +423,58 @@ export class TransactionService {
           message: await requireMessage(tx, messageId),
           transaction,
           confirmations,
+          chonDanhMuc: resolved.chonDanhMuc,
         };
       }),
     );
+  }
+
+  // Q4: người tạo đổi danh mục (và loại THU↔CHI) của giao dịch ghi từ tin nhắn. UPDATE có điều kiện + audit.
+  async changeCategory(
+    giaoDichId: string,
+    nguoiSuaId: MemberId,
+    change: { maDanhMuc: string; loai?: 'THU' | 'CHI' },
+  ): Promise<CancelResult> {
+    const nowIso = this.now().toISOString();
+    return this.db.transaction(async (tx) => {
+      const before = await getTransactionById(tx, giaoDichId);
+      if (!before || before.deleted_at !== null) {
+        throw new DomainError('NOT_FOUND', `Không tìm thấy giao dịch ${giaoDichId}`);
+      }
+      if (before.nguoi_tao_id !== nguoiSuaId) {
+        throw new DomainError('FORBIDDEN', 'Chỉ người ghi được đổi danh mục');
+      }
+      if (before.trang_thai !== TRANSACTION_STATUS.HOAN_TAT) {
+        return { changed: false, transaction: before };
+      }
+      // Truyền loai = đổi Thu↔Chi; đã đúng loại đó (bấm lặp / tin cũ) → giữ nguyên danh mục đang có
+      if (change.loai !== undefined && change.loai === before.loai_giao_dich) {
+        return { changed: false, transaction: before };
+      }
+      const loai = change.loai ?? before.loai_giao_dich;
+      if (!isThuChi(before.loai_giao_dich) || !isThuChi(loai)) {
+        throw new DomainError('INVALID_INPUT', `Giao dịch ${before.loai_giao_dich} không đổi danh mục được`);
+      }
+      const category = await getActiveCategoryByCode(tx, change.maDanhMuc);
+      if (!category || !categoryFits(category.loai_giao_dich, loai) || KEYBOARD_EXCLUDED_CATEGORIES.includes(category.ma_danh_muc)) {
+        throw new DomainError('INVALID_INPUT', `Danh mục ${change.maDanhMuc} không dùng cho ${loai}`);
+      }
+      if ((await updateTransactionCategory(tx, before.id, loai, category.id, nowIso)) === 0) {
+        return { changed: false, transaction: (await getTransactionById(tx, before.id)) ?? before };
+      }
+      const after = (await getTransactionById(tx, before.id)) ?? before;
+      await insertAuditLog(tx, {
+        ten_bang: TABLE_NAME.GIAO_DICH,
+        ban_ghi_id: before.id,
+        hanh_dong: AUDIT_ACTION.UPDATE,
+        du_lieu_truoc: before,
+        du_lieu_sau: after,
+        nguoi_thuc_hien_id: nguoiSuaId,
+        ly_do: 'DOI_DANH_MUC',
+        nowIso,
+      });
+      return { changed: true, transaction: after };
+    });
   }
 
   // Ghi THU/CHI/PHI/LAI_VAY/DIEU_CHINH qua hàm gọi tường minh (key api:<uuid> bắt buộc)
@@ -500,12 +595,21 @@ export class TransactionService {
   }
 
   // Huỷ giao dịch: DA_HUY + xoá mềm lich_su_no đi kèm + tính lại dư nợ + đóng yêu cầu còn chờ
-  async cancelTransaction(giaoDichId: string, nguoiHuyId: MemberId, lyDo: string | null = null): Promise<CancelResult> {
+  // chiNguoiTao: bot chỉ cho người ghi huỷ (Q3); API/đối soát cũ không truyền
+  async cancelTransaction(
+    giaoDichId: string,
+    nguoiHuyId: MemberId,
+    lyDo: string | null = null,
+    options: { chiNguoiTao?: boolean } = {},
+  ): Promise<CancelResult> {
     const nowIso = this.now().toISOString();
     return this.db.transaction(async (tx) => {
       const before = await getTransactionById(tx, giaoDichId);
       if (!before || before.deleted_at !== null) {
         throw new DomainError('NOT_FOUND', `Không tìm thấy giao dịch ${giaoDichId}`);
+      }
+      if (options.chiNguoiTao && before.nguoi_tao_id !== nguoiHuyId) {
+        throw new DomainError('FORBIDDEN', 'Chỉ người ghi được huỷ');
       }
       if (before.trang_thai === TRANSACTION_STATUS.DA_HUY) {
         return { changed: false, transaction: before };
@@ -547,31 +651,6 @@ export class TransactionService {
       });
       return { changed: true, transaction: after ?? before };
     });
-  }
-
-  private async findBlockingReasons(
-    tx: DatabaseAdapter,
-    parsed: ParsedTransactionResult,
-  ): Promise<Array<{ type: ConfirmationType; reason: string }>> {
-    const reasons: Array<{ type: ConfirmationType; reason: string }> = [];
-    const type = parsed.loai_giao_dich;
-    if (parsed.so_tien === null) {
-      reasons.push({ type: CONFIRMATION_TYPE.GIAO_DICH_MO_HO, reason: 'THIEU_SO_TIEN' });
-    } else if (type === null || parsed.requires_confirmation.includes(CONFIRMATION_TYPE.GIAO_DICH_MO_HO)) {
-      reasons.push({ type: CONFIRMATION_TYPE.GIAO_DICH_MO_HO, reason: 'KHONG_RO_LOAI' });
-    } else if (NOT_FROM_MESSAGE_TYPES.includes(type)) {
-      reasons.push({ type: CONFIRMATION_TYPE.GIAO_DICH_MO_HO, reason: `${type}_TU_TIN_NHAN` });
-    }
-    let categoryMissing = parsed.requires_confirmation.includes(CONFIRMATION_TYPE.DANH_MUC_MOI);
-    const needsCategory = type === TRANSACTION_TYPE.THU || type === TRANSACTION_TYPE.CHI;
-    if (!categoryMissing && needsCategory && parsed.ma_danh_muc) {
-      const category = await getActiveCategoryByCode(tx, parsed.ma_danh_muc);
-      categoryMissing = category === null || !categoryFits(category.loai_giao_dich, type);
-    }
-    if (categoryMissing) {
-      reasons.push({ type: CONFIRMATION_TYPE.DANH_MUC_MOI, reason: 'DANH_MUC_CHUA_CO' });
-    }
-    return reasons;
   }
 
   private async buildFromSupplement(

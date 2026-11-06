@@ -42,7 +42,8 @@ const MONEY_HOLDER_RULES: ReadonlyArray<PatternRule<MoneyHolderId>> = [
   },
 ];
 
-const MULTI_BENEFICIARY_REGEX = /\b(?:cho\s+)?(?:cac\s+con|2\s+con|hai\s+con)\b/i;
+// "2 con / hai con" phải có "cho/của" ("mua 2 con gà" không phải các con)
+const MULTI_BENEFICIARY_REGEX = /\b(?:(?:cho\s+|cua\s+)?cac\s+con|(?:cho|cua)\s+(?:2|hai)\s+con)\b/i;
 
 const BENEFICIARY_RULES: ReadonlyArray<PatternRule<BeneficiaryId>> = [
   {
@@ -116,18 +117,24 @@ export function resolveRoles(ctx: ParseContext): RoleResolutionResult {
     }
   }
 
-  // 2. Đối tượng thụ hưởng. Nhiều đối tượng ("các con", "con gái và con trai") → để NULL,
-  // không hỏi phân bổ (người dùng bỏ phân bổ 05/11/2026, bảng phan_bo_giao_dich giữ cho sau này)
-  if (MULTI_BENEFICIARY_REGEX.test(text)) {
-    text = normalizeWhitespace(text.replace(MULTI_BENEFICIARY_REGEX, ' '));
-  } else {
-    const matched = BENEFICIARY_RULES.filter((rule) => rule.regex.test(text));
-    for (const rule of matched) {
+  // 2. Đối tượng thụ hưởng (Q8 Phase 5b): "các con / 2 con" hoặc đủ con gái + con trai → CAC_CON;
+  // nhiều đối tượng khác → NULL, không hỏi phân bổ (bỏ phân bổ 05/11/2026)
+  const found = new Set<BeneficiaryId>();
+  for (const rule of [{ regex: MULTI_BENEFICIARY_REGEX, value: BENEFICIARY_ID.CAC_CON }, ...BENEFICIARY_RULES]) {
+    if (rule.regex.test(text)) {
+      found.add(rule.value);
       text = normalizeWhitespace(text.replace(rule.regex, ' '));
     }
-    if (matched.length === 1) {
-      doiTuongThuHuongId = matched[0]!.value;
-    }
+  }
+  if (found.has(BENEFICIARY_ID.CON_GAI) && found.has(BENEFICIARY_ID.CON_TRAI)) {
+    found.add(BENEFICIARY_ID.CAC_CON);
+  }
+  if (found.has(BENEFICIARY_ID.CAC_CON)) {
+    found.delete(BENEFICIARY_ID.CON_GAI);
+    found.delete(BENEFICIARY_ID.CON_TRAI);
+  }
+  if (found.size === 1) {
+    doiTuongThuHuongId = [...found][0]!;
   }
 
   // 3. Giải quyết nguoi_thuc_hien_id (mặc định bằng senderId nếu không chỉ rõ người khác)

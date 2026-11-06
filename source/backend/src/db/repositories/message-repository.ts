@@ -70,3 +70,13 @@ export async function updateMessageStatus(
   );
   return res.changes;
 }
+
+// Ghi chú nợ (Q6): tin DA_BO_QUA có chi_tiet_loi = GHI_CHU_NO, mới nhất trước
+export function listDebtNotes(db: DatabaseAdapter, limit: number): Promise<TinNhanGocRecord[]> {
+  return db.query<TinNhanGocRecord>(
+    `SELECT * FROM tin_nhan_goc
+     WHERE trang_thai_xu_ly = 'DA_BO_QUA' AND chi_tiet_loi = 'GHI_CHU_NO' AND deleted_at IS NULL
+     ORDER BY thoi_gian_nhan DESC, id DESC LIMIT $1`,
+    [limit],
+  );
+}

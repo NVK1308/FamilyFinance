@@ -73,6 +73,39 @@
 
 ---
 
-## 3. Công Việc Tiếp Theo Cần Làm: PHASE 5
+### ✅ Phase 5a — Telegram Webhook + Bot (ĐÃ DEPLOY 05/11/2026, vợ/chồng đã đăng ký và chạy tích hợp)
+- Plan v3 + 2 vòng review: `E:\QuangIch\AIWorkspace\sessions\FamilyFinance\2026-11-05_phase5-telegram-bot\`
+- [worker.ts](file:///F:/FamilyFinance/source/backend/src/worker.ts): `createWorker({ dbFactory, telegramFactory, now })` → `fetch` + `scheduled`. Webhook `POST /telegram/webhook`: thiếu biến secret hoặc sai header → 401 trước khi đọc body (so sánh hằng thời gian); lỗi tạm thời (PG `08xxx`/`57P01`/`40001`/`40P01`, mất kết nối) → 500 để Telegram gửi lại; lỗi khác → tin `LOI` (transaction riêng) + báo người dùng, 200. Gửi Telegram trong `ctx.waitUntil` sau commit. `/api/parser/preview` chỉ bật khi `ENVIRONMENT=development`. [index.ts](file:///F:/FamilyFinance/source/backend/src/index.ts) chỉ nối Neon WS + Telegram thật.
+- Bot: [handler.ts](file:///F:/FamilyFinance/source/backend/src/bot/handler.ts) (tin nhắn, nút bấm, ghi lỗi), [replies.ts](file:///F:/FamilyFinance/source/backend/src/bot/replies.ts), [commands.ts](file:///F:/FamilyFinance/source/backend/src/bot/commands.ts) (`/start /help /sodu /thang /cho /ghichu /sodudau`), [callback-data.ts](file:///F:/FamilyFinance/source/backend/src/bot/callback-data.ts) (≤ 64 byte). Telegram: [client.ts](file:///F:/FamilyFinance/source/backend/src/telegram/client.ts) (403 → ghi chú cho người chuyển; "not modified"/"query too old" bỏ qua).
+- Chỉ nhận tin chữ trong chat riêng, không phải tin chuyển tiếp; sửa tin → nhắc Huỷ; người lạ → lưu DA_BO_QUA, không trả lời; lệnh không lưu vào `tin_nhan_goc`.
+- Nghiệp vụ đổi (Q4/Q6, chi tiết ở PARSER_RULES 2c): có tiền chưa rõ danh mục → ghi Chi khác/Thu khác + nút đổi danh mục / đổi Thu↔Chi (`TransactionService.changeCategory`, UPDATE có điều kiện + audit `DOI_DANH_MUC`); nợ → ghi chú (`GHI_CHU_NO`); thiếu tiền / điều chỉnh → bỏ qua có lý do. `cancelTransaction(..., { chiNguoiTao: true })` chỉ bot truyền.
+- "Chưa nhận" giữ nút, báo người chuyển ở lần đầu (đếm audit `CHUA_NHAN`); "Đã nhận" → báo người chuyển; người chuyển huỷ → báo người nhận. Update chuyển gửi lại → chỉ gửi lại người nhận khi còn chờ.
+- Job hết hạn [expiry-service.ts](file:///F:/FamilyFinance/source/backend/src/services/expiry-service.ts): cron `0 18 * * *` (1h sáng VN), lô 50 (tối đa 20 lô), mỗi yêu cầu 1 transaction: chuyển → HET_HAN, yêu cầu → HET_HAN, tin gốc DA_BO_QUA (trừ DOI_TUONG_MOI), audit người thực hiện NULL; 0 dòng → rollback yêu cầu đó. Báo người chuyển khi chuyển hết hạn.
+- Cờ vượt số dư lỗi → không cảnh báo, chỉ log (không làm hỏng tin đã ghi).
+- Test: [phase5-bot.test.ts](file:///F:/FamilyFinance/source/backend/tests/phase5-bot.test.ts), [phase5-expiry.test.ts](file:///F:/FamilyFinance/source/backend/tests/phase5-expiry.test.ts). Test Phase 3–4 sửa có chủ đích theo hành vi mới: T7, T8, T9, T16, các test dùng "tiền ăn" để tạo yêu cầu (chuyển sang `legacyPending` tạo yêu cầu trực tiếp), "Danh mục lệch loại", F3/F6.
+- Hướng dẫn deploy: [DEPLOY.md](DEPLOY.md).
+- Đã biết, để sau: `/sodudau` gõ cùng lúc từ 2 máy có thể ghi đè nhau (rất hiếm); gửi lại update giao dịch "Quà tặng" chưa rõ loại thì bàn phím chỉ hiện khi danh mục là Khác; danh mục mã dài > ~21 ký tự không hiện nút (cần đổi sang số thứ tự khi có danh mục tự tạo); `/cho` truy vấn từng khoản (≤ 10).
 
-Theo mục 5 của `FamilyFinance_Master_Code_Plan_v4.md`: Telegram Webhook (xác thực secret header + whitelist `telegram_user_id`), bot handler dựng nút từ `RecordOutcome` (`TRANSFER` → nút "Đã nhận"/"Chưa nhận" cho người nhận; `PENDING` → hỏi lại), job chuyển yêu cầu quá hạn sang `HET_HAN`, truy vấn thống kê tự nhiên. Trước khi deploy: tạo Neon, chạy `temp/neon/01_kiem_tra.sql` rồi `03_setup_db_moi.sql`, sửa `telegram_user_id` thật trong `thanh_vien`.
+### ✅ Phase 5b (5b-1 + 5b-2) — Trả lời câu hỏi thống kê (CODE XONG, 234/234 test pass trên SQLite + PGlite, typecheck sạch; CHƯA DEPLOY)
+- Plan v3.1 + 2 vòng review: `E:\QuangIch\AIWorkspace\sessions\FamilyFinance\2026-11-06_phase5b-cau-hoi-thong-ke\`. Quy tắc: [QUERY_RULES.md](QUERY_RULES.md).
+- Classifier tách câu hỏi khỏi câu ghi (Q6): "tiền ăn 50k?" vẫn ghi, "tiền ăn 50k rồi à?" là câu hỏi, "số dư 3tr" nhắc /sodudau.
+- 5b-1: tổng thu/chi, tiết kiệm, tổng quan, số dư (cả 1 nhóm, cuối kỳ), theo danh mục, theo đối tượng, lọc người thực hiện / đối tượng / danh mục (nhóm học, y tế, ăn uống) / quỹ chung, "trong đó từ quỹ chung" (Q2). Câu nợ → xem /ghichu.
+- 5b-2: khoản lớn nhất (top 5), ai chi nhiều nhất (theo người thực hiện), so sánh 2 kỳ (thứ tự theo câu, kỳ tương đối, kỳ dở dang), chuyển tiền theo trạng thái / chiều (lịch sử chỉ cộng khoản đã nhận), liệt kê (10 khoản mới nhất, thu/chi tách riêng).
+- Câu hỏi chưa hiểu → lưu `tin_nhan_goc` DA_BO_QUA `CAU_HOI_CHUA_HIEU` (Q7). Câu hỏi hiểu được chỉ đọc DB.
+- Đối tượng mới `CAC_CON` (Q8): seed 0003 (SQLite + PGlite), Neon chạy `temp/neon/04_them_cac_con.sql` **trước** khi deploy; `neon-members check` + deploy bước 5 kiểm có CAC_CON. Test Phase 4 A1 + contract `TC_11_V4_CAC_CON` sửa có chủ đích.
+- Test: [phase5b-query.test.ts](file:///F:/FamilyFinance/source/backend/tests/phase5b-query.test.ts).
+
+### ✅ Phase 5c-1 — Hũ tiết kiệm, phần tiền (CODE XONG, 252/252 test pass trên SQLite + PGlite, typecheck + verify-schema sạch; CHƯA DEPLOY, CHƯA COMMIT)
+- Plan v2 + review vòng 1: `E:\QuangIch\AIWorkspace\sessions\FamilyFinance\2026-11-06_hu-tiet-kiem\`. Người dùng chốt: hũ là tài sản chung, khai báo + đắp dần như quỹ chung, giá trị lúc giao dịch; vàng (5c-2) định giá theo giá mua/bán gần nhất, không tự ghi lãi/lỗ.
+- Bảng `hu_tiet_kiem` (migration 0004, Postgres + SQLite desktop, Neon `temp/neon/05_hu_tiet_kiem.sql`) — chi tiết [DATABASE_DESIGN.md](DATABASE_DESIGN.md) 3.1c. Đủ cột cho vàng (số phân) để 5c-2 không cần migration.
+- Parser `savings-detector.ts` (trước quỹ chung) → `SAVINGS_MOVE`; `SavingsService` (ghi ngay, huỷ `hk:`, báo người kia, cảnh báo vượt số dư dùng chung `BalanceService.isOverBalance`); số dư tiền mặt 2 cách đều tính dòng hũ (cùng bộ lọc); `/tietkiem`, `/tietkiemdau <tiền>` (khoá `tg:<update_id>`); `/sodu` + câu hỏi số dư chung có hũ + tổng tài sản; câu hỏi số dư hũ / bỏ vào trong kỳ.
+- Contract: `SAVINGS_MOVE`, `hu_tiet_kiem` trong `syncTablesOrder` (desktop Phase 7 phải đồng bộ bảng này). `neon-members check` + deploy bước 5 kiểm có bảng.
+- Test: [phase5c-savings.test.ts](file:///F:/FamilyFinance/source/backend/tests/phase5c-savings.test.ts).
+
+---
+
+## 3. Công Việc Tiếp Theo
+
+- **Deploy 5b + 5c-1**: Neon chạy `temp/neon/04_them_cac_con.sql` (nếu chưa) rồi `temp/neon/05_hu_tiet_kiem.sql`, sau đó `deploy.ps1 -From 3 -To 4 -Yes`. Thử câu hỏi thật, câu sai → bổ sung luật (xem tin `CAU_HOI_CHUA_HIEU`).
+- **Phase 5c-2**: vàng (mua / bán / khai báo theo chỉ – phân – lượng, đơn giá "/chỉ", định giá theo giá gần nhất).
+- Dồn lại: version seed (Phase 7), khoá kỳ đã chốt (Phase 8), test kết nối Neon WS thật (Phase 10).

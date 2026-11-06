@@ -10,6 +10,7 @@ import {
   apiKey,
   count,
   expectDomainError,
+  legacyPending,
   msg,
   snapshotCounts,
   type TestEnv,
@@ -82,9 +83,7 @@ for (const backend of BACKENDS) {
     });
 
     it('T5: VO bấm xác nhận yêu cầu của CHONG → lỗi sai người, không đổi gì', async () => {
-      const out = await env.txs.recordFromText(msg(MEMBER_ID.CHONG, 'tiền ăn'));
-      assert.equal(out.kind, 'PENDING');
-      if (out.kind !== 'PENDING') return;
+      const out = await legacyPending(env, MEMBER_ID.CHONG, 'tiền ăn');
       const req = out.confirmations[0]!;
       const before = await snapshotCounts(env.db);
       await expectDomainError(
@@ -97,9 +96,7 @@ for (const backend of BACKENDS) {
     });
 
     it('T6: xác nhận 2 lần chỉ ghi 1 giao dịch; huỷ 2 lần chỉ huỷ 1 lần', async () => {
-      const out = await env.txs.recordFromText(msg(MEMBER_ID.CHONG, 'tiền ăn'));
-      assert.equal(out.kind, 'PENDING');
-      if (out.kind !== 'PENDING') return;
+      const out = await legacyPending(env, MEMBER_ID.CHONG, 'tiền ăn');
       const req = out.confirmations[0]!;
       const first = await env.txs.resolveConfirmation(req.id, MEMBER_ID.CHONG, { type: 'ACCEPT', data: { so_tien: 50_000 } });
       assert.equal(first.changed, true);
@@ -135,8 +132,7 @@ for (const backend of BACKENDS) {
     });
 
     it('T6c: bấm lặp ACCEPT không kèm dữ liệu sau khi đã ghi → no-op, không lỗi', async () => {
-      const out = await env.txs.recordFromText(msg(MEMBER_ID.VO, 'tiền ăn'));
-      if (out.kind !== 'PENDING') throw new Error('expected PENDING');
+      const out = await legacyPending(env, MEMBER_ID.VO, 'tiền ăn');
       const id = out.confirmations[0]!.id;
       await env.txs.resolveConfirmation(id, MEMBER_ID.VO, { type: 'ACCEPT', data: { so_tien: 50_000 } });
       const again = await env.txs.resolveConfirmation(id, MEMBER_ID.VO, { type: 'ACCEPT' });
@@ -145,9 +141,8 @@ for (const backend of BACKENDS) {
     });
 
     it('Trả lời đổi người thực hiện → người giữ mặc định đi theo; câu nói rõ người giữ thì giữ nguyên', async () => {
-      const a = await env.txs.recordFromText(msg(MEMBER_ID.VO, 'tiền ăn'));
-      const b = await env.txs.recordFromText(msg(MEMBER_ID.VO, 'tiền ăn lấy quỹ chung'));
-      if (a.kind !== 'PENDING' || b.kind !== 'PENDING') throw new Error('expected PENDING');
+      const a = await legacyPending(env, MEMBER_ID.VO, 'tiền ăn');
+      const b = await legacyPending(env, MEMBER_ID.VO, 'tiền ăn lấy quỹ chung');
       const ra = await env.txs.resolveConfirmation(a.confirmations[0]!.id, MEMBER_ID.VO, {
         type: 'ACCEPT', data: { so_tien: 50_000, nguoi_thuc_hien_id: 'CHONG' },
       });
@@ -158,25 +153,33 @@ for (const backend of BACKENDS) {
       assert.equal(rb.transaction?.nguoi_giu_tien_id, 'QUY_CHUNG');
     });
 
-    it('Danh mục lệch loại ("thu: tiền ăn 50k") → hỏi lại DANH_MUC_MOI; hàm tường minh từ chối', async () => {
+    it('Danh mục lệch loại ("thu: tiền ăn 50k") → Phase 5 ghi Thu khác + chọn danh mục; hàm tường minh từ chối', async () => {
       const out = await env.txs.recordFromText(msg(MEMBER_ID.VO, 'thu: tiền ăn 50k'));
-      assert.equal(out.kind, 'PENDING');
-      if (out.kind !== 'PENDING') return;
-      assert.equal(out.confirmations[0]?.loai_xac_nhan, CONFIRMATION_TYPE.DANH_MUC_MOI);
+      assert.equal(out.kind, 'RECORDED');
+      if (out.kind !== 'RECORDED') return;
+      assert.equal(out.transaction.loai_giao_dich, 'THU');
+      assert.equal(out.transaction.danh_muc_id, 'DM_THU_KHAC');
+      assert.equal(out.chonDanhMuc, true);
       const base = { soTien: 1_000, nguoiTaoId: 'VO' as const, nguoiGiuTienId: 'VO' as const, moTa: 'x', ngayGiaoDich: '2026-11-04' };
       await expectDomainError(env.txs.recordExplicit({ ...base, idempotencyKey: apiKey(), loai: 'CHI', maDanhMuc: 'LUONG' }), 'INVALID_INPUT');
       await expectDomainError(env.txs.recordExplicit({ ...base, idempotencyKey: apiKey(), loai: 'PHI', maDanhMuc: 'THUC_AN' }), 'INVALID_INPUT');
     });
 
-    it('T7: "tiền ăn" thiếu số tiền → không ghi, tin CHO_XAC_NHAN + GIAO_DICH_MO_HO; từ chối → DA_BO_QUA', async () => {
-      const out = await env.txs.recordFromText(msg(MEMBER_ID.VO, 'tiền ăn'));
-      assert.equal(out.kind, 'PENDING');
-      if (out.kind !== 'PENDING') return;
+    it('T7 (Phase 5): "tiền ăn" / "3 hay 4 triệu" → không ghi, không yêu cầu, tin DA_BO_QUA + lý do', async () => {
+      const a = await env.txs.recordFromText(msg(MEMBER_ID.VO, 'tiền ăn'));
+      const b = await env.txs.recordFromText(msg(MEMBER_ID.VO, '3 hay 4 triệu'));
+      assert.ok(a.kind === 'IGNORED' && b.kind === 'IGNORED');
+      if (a.kind !== 'IGNORED' || b.kind !== 'IGNORED') return;
+      assert.equal(a.reason, 'THIEU_SO_TIEN');
+      assert.equal(b.reason, 'SO_TIEN_MO_HO');
+      assert.equal(a.message.trang_thai_xu_ly, 'DA_BO_QUA');
       assert.equal(await count(env.db, 'giao_dich'), 0);
-      assert.equal(out.message.trang_thai_xu_ly, 'CHO_XAC_NHAN');
-      assert.deepEqual(out.confirmations.map((c) => c.loai_xac_nhan), [CONFIRMATION_TYPE.GIAO_DICH_MO_HO]);
+      assert.equal(await count(env.db, 'yeu_cau_xac_nhan'), 0);
+    });
+
+    it('T7b: yêu cầu cũ GIAO_DICH_MO_HO từ chối → tin DA_BO_QUA, không ghi', async () => {
+      const out = await legacyPending(env, MEMBER_ID.VO, 'tiền ăn');
       const req = out.confirmations[0]!;
-      assert.ok(JSON.parse(req.du_lieu_de_xuat_json).parsed, 'yêu cầu giữ dữ liệu thô');
       const rej = await env.txs.resolveConfirmation(req.id, MEMBER_ID.VO, { type: 'REJECT' });
       assert.equal(rej.changed, true);
       assert.equal(rej.confirmation.trang_thai, 'TU_CHOI');
@@ -185,41 +188,41 @@ for (const backend of BACKENDS) {
       assert.equal(await count(env.db, 'giao_dich'), 0);
     });
 
-    it('T8: "vay ngân hàng 10tr" qua tin nhắn → không ghi, GIAO_DICH_MO_HO (Q8)', async () => {
+    it('T8 (Phase 5, Q6): "vay ngân hàng 10tr" → ghi chú nợ, không giao dịch, không yêu cầu', async () => {
       const out = await env.txs.recordFromText(msg(MEMBER_ID.CHONG, 'vay ngân hàng 10tr'));
-      assert.equal(out.kind, 'PENDING');
-      if (out.kind !== 'PENDING') return;
+      assert.equal(out.kind, 'IGNORED');
+      if (out.kind !== 'IGNORED') return;
+      assert.equal(out.reason, 'GHI_CHU_NO');
+      assert.equal(out.message.chi_tiet_loi, 'GHI_CHU_NO');
       assert.equal(await count(env.db, 'giao_dich'), 0);
-      assert.equal(out.confirmations[0]?.loai_xac_nhan, CONFIRMATION_TYPE.GIAO_DICH_MO_HO);
-      assert.equal(JSON.parse(out.confirmations[0]!.du_lieu_de_xuat_json).ly_do, 'VAY_TU_TIN_NHAN');
-      // Trả lời bằng loại VAY vẫn không ghi được qua đường này: nợ phải đi DebtService
-      await expectDomainError(
-        env.txs.resolveConfirmation(out.confirmations[0]!.id, MEMBER_ID.CHONG, { type: 'ACCEPT' }),
-        'NOT_SUPPORTED',
-      );
+      assert.equal(await count(env.db, 'yeu_cau_xac_nhan'), 0);
     });
 
-    it('T9: "50k" không rõ tiền gì / "chi 50k abc" danh mục mới → không ghi, hỏi lại; chọn danh mục → ghi', async () => {
+    it('T9 (Phase 5, Q4): "50k" → Chi khác; "chi 50k abc" → Chi khác; yêu cầu DANH_MUC_MOI cũ chọn danh mục → ghi', async () => {
       const a = await env.txs.recordFromText(msg(MEMBER_ID.VO, '50k'));
       const b = await env.txs.recordFromText(msg(MEMBER_ID.VO, 'chi 50k abc'));
-      assert.ok(a.kind === 'PENDING' && b.kind === 'PENDING');
-      if (a.kind !== 'PENDING' || b.kind !== 'PENDING') return;
-      assert.equal(a.confirmations[0]?.loai_xac_nhan, CONFIRMATION_TYPE.GIAO_DICH_MO_HO);
-      assert.equal(b.confirmations[0]?.loai_xac_nhan, CONFIRMATION_TYPE.DANH_MUC_MOI);
-      assert.equal(await count(env.db, 'giao_dich'), 0);
+      assert.ok(a.kind === 'RECORDED' && b.kind === 'RECORDED');
+      if (a.kind !== 'RECORDED' || b.kind !== 'RECORDED') return;
+      for (const out of [a, b]) {
+        assert.equal(out.transaction.loai_giao_dich, 'CHI');
+        assert.equal(out.transaction.danh_muc_id, 'DM_CHI_KHAC');
+        assert.equal(out.chonDanhMuc, true);
+      }
+      assert.equal(await count(env.db, 'yeu_cau_xac_nhan'), 0);
 
+      const old = await legacyPending(env, MEMBER_ID.VO, 'chi 50k abc', CONFIRMATION_TYPE.DANH_MUC_MOI);
       // Chọn danh mục chưa có → lỗi, yêu cầu vẫn chờ
       await expectDomainError(
-        env.txs.resolveConfirmation(b.confirmations[0]!.id, MEMBER_ID.VO, { type: 'ACCEPT', data: { ma_danh_muc: 'KHONG_CO' } }),
+        env.txs.resolveConfirmation(old.confirmations[0]!.id, MEMBER_ID.VO, { type: 'ACCEPT', data: { ma_danh_muc: 'KHONG_CO' } }),
         'INVALID_INPUT',
       );
-      const ok = await env.txs.resolveConfirmation(b.confirmations[0]!.id, MEMBER_ID.VO, {
+      const ok = await env.txs.resolveConfirmation(old.confirmations[0]!.id, MEMBER_ID.VO, {
         type: 'ACCEPT',
-        data: { ma_danh_muc: 'CHI_KHAC' },
+        data: { ma_danh_muc: 'THUC_AN' },
       });
-      assert.equal(ok.transaction?.danh_muc_id, 'DM_CHI_KHAC');
+      assert.equal(ok.transaction?.danh_muc_id, 'DM_THUC_AN');
       assert.equal(ok.transaction?.nguoi_giu_tien_id, 'VO');
-      assert.equal(await count(env.db, 'giao_dich'), 1);
+      assert.equal(await count(env.db, 'giao_dich'), 3);
     });
 
     it('T9b: đối tượng mới vẫn ghi HOAN_TAT + yêu cầu DOI_TUONG_MOI', async () => {
@@ -237,9 +240,10 @@ for (const backend of BACKENDS) {
       assert.equal(await count(env.db, 'yeu_cau_xac_nhan', "trang_thai = 'TU_CHOI'"), 1);
     });
 
-    it('T16 (tin nhắn): DIEU_CHINH từ tin nhắn → GIAO_DICH_MO_HO, không ghi', async () => {
+    it('T16 (tin nhắn, Phase 5): DIEU_CHINH từ tin nhắn → IGNORED chưa hỗ trợ, không ghi', async () => {
       const out = await env.txs.recordFromText(msg(MEMBER_ID.CHONG, 'dieu chinh: 1tr'));
-      assert.equal(out.kind, 'PENDING');
+      assert.equal(out.kind, 'IGNORED');
+      assert.equal(out.kind === 'IGNORED' ? out.reason : '', 'DIEU_CHINH_CHUA_HO_TRO_CHAT');
       assert.equal(await count(env.db, 'giao_dich'), 0);
     });
 
@@ -310,9 +314,8 @@ for (const backend of BACKENDS) {
       assert.equal(await count(env.db, 'yeu_cau_xac_nhan'), 0);
     });
 
-    it('Yêu cầu quá hạn 7 ngày → xác nhận không ghi (chuyển HET_HAN là việc job Phase 5)', async () => {
-      const out = await env.txs.recordFromText(msg(MEMBER_ID.VO, 'tiền ăn'));
-      if (out.kind !== 'PENDING') throw new Error('expected PENDING');
+    it('Yêu cầu quá hạn 7 ngày → xác nhận không ghi (chuyển HET_HAN là việc job hết hạn)', async () => {
+      const out = await legacyPending(env, MEMBER_ID.VO, 'tiền ăn');
       env.setNow('2026-11-12T03:00:00.000Z');
       const res = await env.txs.resolveConfirmation(out.confirmations[0]!.id, MEMBER_ID.VO, {
         type: 'ACCEPT',

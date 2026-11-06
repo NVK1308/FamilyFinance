@@ -28,6 +28,8 @@ export const MESSAGE_INTENT = {
   EXPORT_HTML_REPORT: 'EXPORT_HTML_REPORT',
   CONFIRMATION_REPLY: 'CONFIRMATION_REPLY',
   FUND_TRANSFER: 'FUND_TRANSFER',
+  // Hũ tiết kiệm (Phase 5c)
+  SAVINGS_MOVE: 'SAVINGS_MOVE',
   UNKNOWN: 'UNKNOWN',
 } as const;
 
@@ -55,6 +57,8 @@ export const BENEFICIARY_ID = {
   CON_GAI: 'CON_GAI',
   CON_TRAI: 'CON_TRAI',
   GIA_DINH: 'GIA_DINH',
+  // Tất cả các con (seed 0003, Phase 5b Q8)
+  CAC_CON: 'CAC_CON',
 } as const;
 
 export type BeneficiaryId = (typeof BENEFICIARY_ID)[keyof typeof BENEFICIARY_ID];
@@ -136,6 +140,25 @@ export const FUND_MOVE_STATUS = {
 
 export type FundMoveStatus = (typeof FUND_MOVE_STATUS)[keyof typeof FUND_MOVE_STATUS];
 
+// Hũ tiết kiệm (bảng hu_tiet_kiem, migration 0004): khai báo tài sản có sẵn / bỏ vào / lấy ra
+export const SAVINGS_DIRECTION = {
+  KHAI_BAO: 'KHAI_BAO',
+  NOP: 'NOP',
+  RUT: 'RUT',
+} as const;
+
+export type SavingsDirection = (typeof SAVINGS_DIRECTION)[keyof typeof SAVINGS_DIRECTION];
+
+export const ASSET_TYPE = {
+  TIEN: 'TIEN',
+  VANG: 'VANG',
+} as const;
+
+export type AssetType = (typeof ASSET_TYPE)[keyof typeof ASSET_TYPE];
+
+// Nhóm tiền mặt làm nguồn / đích của hũ (không có CHUA_XAC_DINH)
+export type SavingsSourceId = 'VO' | 'CHONG' | 'QUY_CHUNG';
+
 // Chiều của giao dịch DIEU_CHINH (migration 0002)
 export const ADJUSTMENT_DIRECTION = {
   TANG: 'TANG',
@@ -170,6 +193,7 @@ export const TABLE_NAME = {
   PHAN_BO_GIAO_DICH: 'phan_bo_giao_dich',
   CHUYEN_TIEN_NOI_BO: 'chuyen_tien_noi_bo',
   CHUYEN_QUY_CHUNG: 'chuyen_quy_chung',
+  HU_TIET_KIEM: 'hu_tiet_kiem',
   LICH_SU_NO: 'lich_su_no',
   YEU_CAU_XAC_NHAN: 'yeu_cau_xac_nhan',
   LICH_SU_CHINH_SUA: 'lich_su_chinh_sua',
@@ -286,7 +310,7 @@ export const DEFAULT_CATEGORIES: readonly CategoryDefinition[] = [
     code: CATEGORY_CODE.THU_KHAC,
     name: 'Thu khác',
     scope: CATEGORY_SCOPE.THU,
-    keywords: ['thu khác', 'thu khac'],
+    keywords: ['thu khác', 'thu khac', 'lãi tiết kiệm', 'lai tiet kiem', 'lãi ngân hàng', 'lai ngan hang'],
   },
   {
     code: CATEGORY_CODE.THUC_AN,

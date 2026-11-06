@@ -2,7 +2,7 @@ import type { MoneyHolderId, TransactionType } from '../../config/constants.ts';
 import { toSafeNumber, type DatabaseAdapter } from '../types.ts';
 
 // Điều kiện chung: giao dịch đã hoàn tất, chưa xoá, ngày trong [$1, $2]
-const TX_IN_RANGE = `g.trang_thai = 'HOAN_TAT' AND g.deleted_at IS NULL
+export const TX_IN_RANGE = `g.trang_thai = 'HOAN_TAT' AND g.deleted_at IS NULL
   AND g.ngay_giao_dich >= $1 AND g.ngay_giao_dich <= $2`;
 
 const TRANSFER_IN_RANGE = `c.trang_thai = 'DA_XAC_NHAN' AND c.deleted_at IS NULL

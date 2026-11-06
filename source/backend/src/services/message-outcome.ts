@@ -1,8 +1,10 @@
-import { CONFIRMATION_TYPE, MESSAGE_STATUS, type MemberId } from '../config/constants.ts';
+import { CATEGORY_CODE, CONFIRMATION_TYPE, MESSAGE_STATUS, type MemberId } from '../config/constants.ts';
 import {
+  getCategoryById,
   getFundMoveByIdempotencyKey,
   getMessageById,
   getMessageByUpdateId,
+  getSavingsMoveByIdempotencyKey,
   getTransactionByIdempotencyKey,
   getTransferByIdempotencyKey,
   insertMessageIfNew,
@@ -14,6 +16,7 @@ import type {
   ChuyenTienNoiBoRecord,
   DatabaseAdapter,
   GiaoDichRecord,
+  HuTietKiemRecord,
   TinNhanGocRecord,
   YeuCauXacNhanRecord,
 } from '../db/types.ts';
@@ -37,6 +40,8 @@ export type RecordOutcome =
       message: TinNhanGocRecord;
       transaction: GiaoDichRecord;
       confirmations: YeuCauXacNhanRecord[];
+      // Q4: ghi vào danh mục mặc định / chưa rõ loại → bot hiện nút đổi danh mục
+      chonDanhMuc: boolean;
     }
   | { kind: 'PENDING'; duplicate: boolean; message: TinNhanGocRecord; confirmations: YeuCauXacNhanRecord[] }
   | {
@@ -53,6 +58,14 @@ export type RecordOutcome =
       duplicate: boolean;
       message: TinNhanGocRecord;
       fundMove: ChuyenQuyChungRecord;
+      canhBaoVuotSoDu: boolean;
+    }
+  | {
+      kind: 'SAVINGS_MOVE';
+      duplicate: boolean;
+      message: TinNhanGocRecord;
+      move: HuTietKiemRecord;
+      // Bỏ vào nhiều hơn nguồn đang giữ / lấy ra nhiều hơn hũ đang có (chỉ cảnh báo)
       canhBaoVuotSoDu: boolean;
     }
   | { kind: 'IGNORED'; duplicate: boolean; message: TinNhanGocRecord; reason: string }
@@ -113,7 +126,9 @@ export async function loadExistingOutcome(db: DatabaseAdapter, updateId: number)
   const confirmations = await listConfirmationsByMessage(db, message.id);
   const transaction = await getTransactionByIdempotencyKey(db, key);
   if (transaction) {
-    return { kind: 'RECORDED', duplicate: true, message, transaction, confirmations };
+    const category = transaction.danh_muc_id ? await getCategoryById(db, transaction.danh_muc_id) : null;
+    const chonDanhMuc = category?.ma_danh_muc === CATEGORY_CODE.CHI_KHAC || category?.ma_danh_muc === CATEGORY_CODE.THU_KHAC;
+    return { kind: 'RECORDED', duplicate: true, message, transaction, confirmations, chonDanhMuc };
   }
   const transfer = await getTransferByIdempotencyKey(db, key);
   if (transfer) {
@@ -123,6 +138,13 @@ export async function loadExistingOutcome(db: DatabaseAdapter, updateId: number)
   const fundMove = await getFundMoveByIdempotencyKey(db, key);
   if (fundMove) {
     return { kind: 'FUND_MOVE', duplicate: true, message, fundMove, canhBaoVuotSoDu: false };
+  }
+  const move = await getSavingsMoveByIdempotencyKey(db, key);
+  if (move) {
+    return { kind: 'SAVINGS_MOVE', duplicate: true, message, move, canhBaoVuotSoDu: false };
+  }
+  if (message.trang_thai_xu_ly === MESSAGE_STATUS.LOI) {
+    return { kind: 'IGNORED', duplicate: true, message, reason: MESSAGE_STATUS.LOI };
   }
   if (message.trang_thai_xu_ly === MESSAGE_STATUS.DA_BO_QUA) {
     return { kind: 'IGNORED', duplicate: true, message, reason: message.chi_tiet_loi ?? '' };

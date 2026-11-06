@@ -5,9 +5,15 @@ compatibility_date = "2026-11-01"
 [vars]
 TIMEZONE = "Asia/Ho_Chi_Minh"
 CURRENCY = "VND"
+# production khi deploy thật: tắt /api/parser/preview (Q13)
 ENVIRONMENT = "development"
 
+# Job hết hạn yêu cầu xác nhận: 18:00 UTC = 1h sáng giờ VN
+[triggers]
+crons = ["0 18 * * *"]
+
 # Lưu ý bảo mật:
+# Secret (bắt buộc): TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, NEON_DATABASE_URL.
 # Không ghi trực tiếp TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, NEON_DATABASE_URL vào file này.
 # Sử dụng lệnh `npx wrangler secret put <KEY>` hoặc file `.dev.vars` (đã chặn trong .gitignore).
 

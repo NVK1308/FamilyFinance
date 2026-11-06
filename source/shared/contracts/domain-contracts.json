@@ -21,6 +21,7 @@
       "EXPORT_HTML_REPORT",
       "CONFIRMATION_REPLY",
       "FUND_TRANSFER",
+      "SAVINGS_MOVE",
       "UNKNOWN"
     ],
     "MemberId": [
@@ -38,7 +39,8 @@
       "CHONG",
       "CON_GAI",
       "CON_TRAI",
-      "GIA_DINH"
+      "GIA_DINH",
+      "CAC_CON"
     ],
     "TransactionStatus": [
       "CHO_XAC_NHAN",
@@ -74,6 +76,7 @@
     "phan_bo_giao_dich",
     "chuyen_tien_noi_bo",
     "chuyen_quy_chung",
+    "hu_tiet_kiem",
     "lich_su_no",
     "yeu_cau_xac_nhan",
     "lich_su_chinh_sua",

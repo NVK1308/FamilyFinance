@@ -90,3 +90,31 @@ export async function markTransactionCancelled(
   );
   return res.changes;
 }
+
+// Đổi loại + danh mục giao dịch còn HOAN_TAT. Trả 0 nếu đã huỷ hoặc không có gì đổi (bấm lặp).
+export async function updateTransactionCategory(
+  db: DatabaseAdapter,
+  id: string,
+  loai: TransactionType,
+  danhMucId: string,
+  nowIso: string,
+): Promise<number> {
+  const version = await db.nextVersion();
+  const res = await db.execute(
+    `UPDATE giao_dich SET loai_giao_dich = $2, danh_muc_id = $3, updated_at = $4, version = $5
+     WHERE id = $1 AND trang_thai = 'HOAN_TAT' AND deleted_at IS NULL
+       AND (loai_giao_dich <> $2 OR danh_muc_id IS NULL OR danh_muc_id <> $3)`,
+    [id, loai, danhMucId, nowIso, version],
+  );
+  return res.changes;
+}
+
+// Có giao dịch HOAN_TAT từ ngày này trở đi không (cảnh báo khi nhập số dư ban đầu)
+export async function hasCompletedTransactionsFrom(db: DatabaseAdapter, fromDate: string): Promise<boolean> {
+  const row = await db.queryOne<{ id: string }>(
+    `SELECT id FROM giao_dich
+     WHERE trang_thai = 'HOAN_TAT' AND deleted_at IS NULL AND ngay_giao_dich >= $1 LIMIT 1`,
+    [fromDate],
+  );
+  return row !== null;
+}

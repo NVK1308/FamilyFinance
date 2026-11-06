@@ -26,3 +26,23 @@ export function getActiveCategoryByCode(
     [code],
   );
 }
+
+export function getCategoryById(db: DatabaseAdapter, id: string): Promise<DanhMucRecord | null> {
+  return db.queryOne<DanhMucRecord>('SELECT * FROM danh_muc WHERE id = $1', [id]);
+}
+
+// Danh mục đang dùng được cho THU/CHI (gồm CA_HAI), trừ các mã truyền vào
+export function listActiveCategoriesFor(
+  db: DatabaseAdapter,
+  loai: 'THU' | 'CHI',
+  excludeCodes: readonly string[] = [],
+): Promise<DanhMucRecord[]> {
+  const placeholders = excludeCodes.map((_code, i) => `$${i + 2}`).join(', ');
+  return db.query<DanhMucRecord>(
+    `SELECT * FROM danh_muc
+     WHERE loai_giao_dich IN ($1, 'CA_HAI') AND is_active = TRUE AND deleted_at IS NULL` +
+      (placeholders ? ` AND ma_danh_muc NOT IN (${placeholders})` : '') +
+      ' ORDER BY version, id',
+    [loai, ...excludeCodes],
+  );
+}
