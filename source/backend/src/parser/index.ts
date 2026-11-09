@@ -14,7 +14,7 @@ import { detectFundTransfer } from './fund-detector.ts';
 import { classifyIntent } from './intent-classifier.ts';
 import { createParseContext } from './normalizer.ts';
 import { resolveRoles } from './role-resolver.ts';
-import { detectSavings } from './savings-detector.ts';
+import { detectSavings, extractJarSource, jarWordGate } from './savings-detector.ts';
 import type { ParseOptions, ParseResult } from './types.ts';
 
 function computeCashflowImpact(type: TransactionType | null, amount: number | null): number {
@@ -104,13 +104,14 @@ export function parseVietnameseFinanceMessage(
 
   // 3a. Hũ tiết kiệm (trước quỹ chung: "lấy quỹ chung bỏ hũ" là bỏ hũ, nguồn quỹ chung)
   if (classification.explicitTransactionType === null) {
-    const savings = detectSavings(ctx.workingAsciiText, ctx.senderId);
+    const savings = detectSavings(ctx.workingAsciiText, ctx.senderId, options.jarNames, jarWordGate(ctx.normalizedText));
     if (savings) {
       return {
         intent: MESSAGE_INTENT.SAVINGS_MOVE,
         chieu: savings.chieu,
         thanh_vien_id: ctx.senderId,
         nguon_id: savings.chieu === SAVINGS_DIRECTION.KHAI_BAO ? null : (savings.nguon ?? ctx.senderId),
+        ten_hu: savings.tenHu,
         so_tien: amountResult.isAmbiguous ? null : amountResult.amount,
         so_tien_mo_ho: amountResult.isAmbiguous,
         ngay: transactionDate,
@@ -138,6 +139,11 @@ export function parseVietnameseFinanceMessage(
   }
 
   const roles = resolveRoles(ctx);
+  // B: "khám bệnh 2tr lấy từ quỹ y tế" — bỏ cụm hũ trước khi khớp danh mục
+  const jarSource = classification.explicitTransactionType === null ? extractJarSource(ctx.workingAsciiText, options.jarNames, jarWordGate(ctx.normalizedText)) : null;
+  if (jarSource) {
+    ctx.workingAsciiText = jarSource.rest;
+  }
   const categoryMatch = matchCategoryAndType(ctx, classification.explicitTransactionType);
 
   const finalType = categoryMatch.inferredTransactionType;
@@ -186,6 +192,7 @@ export function parseVietnameseFinanceMessage(
     requires_confirmation: confirmations,
     cashflow_impact: computeCashflowImpact(finalType, amountResult.amount),
     mo_ta: ctx.rawText,
+    ten_hu_nguon: jarSource ? jarSource.tenHu : null,
   };
 }
 

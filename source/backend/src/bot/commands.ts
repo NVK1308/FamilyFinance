@@ -1,4 +1,4 @@
-import { CONFIRMATION_STATUS, CONFIRMATION_TYPE, type MemberId } from '../config/constants.ts';
+import { CONFIRMATION_STATUS, CONFIRMATION_TYPE, DEFAULT_JAR_ID, type MemberId } from '../config/constants.ts';
 import {
   hasCompletedTransactionsFrom,
   listActiveInitialBalances,
@@ -16,6 +16,7 @@ import {
   HELP_TEXT,
   balanceSummaryLines,
   ignoredText,
+  jarListLines,
   cancelButton,
   formatDay,
   formatMoney,
@@ -66,6 +67,8 @@ export async function runCommand(
       return reply(await setInitial(ctx, member.id as MemberId, args));
     case 'tietkiem':
       return reply(await savingsJarText(ctx));
+    case 'taohu':
+      return reply(await createJar(ctx, member, args));
     case 'tietkiemdau':
       return declareSavings(ctx, member, chatId, args, updateId);
     default:
@@ -85,19 +88,57 @@ async function balanceText(ctx: BotContext): Promise<string> {
 
 const SAVINGS_LABEL: Record<string, string> = { KHAI_BAO: 'Khai báo', NOP: 'Bỏ vào', RUT: 'Lấy ra' };
 const SAVINGS_RECENT = 5;
-const SAVINGS_SYNTAX = 'Cú pháp: /tietkiemdau 50tr (tiền đang để dành, không trừ ai). Bỏ thêm: nhắn "bỏ hũ tiết kiệm 5tr".';
+const SAVINGS_SYNTAX = [
+  'Tạo hũ: /taohu Mua nhà 2 tỷ (mục tiêu không bắt buộc)',
+  'Khai báo tiền đang để dành (không trừ ai): /tietkiemdau 50tr mua nhà',
+  'Bỏ / lấy: nhắn "bỏ hũ mua nhà 5tr", "rút quỹ y tế 2tr", "khám bệnh 500k lấy từ quỹ y tế"',
+].join('\n');
 
 async function savingsJarText(ctx: BotContext): Promise<string> {
   const today = toVnDate(ctx.now());
-  const jar = await ctx.savings.getJar(today);
-  if (jar.soDong === 0) {
-    return `🏺 Hũ tiết kiệm đang trống.\n${SAVINGS_SYNTAX}`;
-  }
+  const rows = await ctx.savings.listJarBalances(today);
+  const names = new Map(rows.map((r) => [r.jar.id, r.jar.ten]));
   const recent = (await ctx.savings.listRecent(SAVINGS_RECENT)).map((h) => {
-    const who = h.nguon_id === null ? '' : h.nguon_id === 'QUY_CHUNG' ? ' (quỹ chung)' : ` (${memberName(h.nguon_id).toLowerCase()})`;
-    return `• ${formatDay(h.ngay)} ${SAVINGS_LABEL[h.chieu]} ${formatMoney(Number(h.so_tien ?? 0))}${who}`;
+    const who = h.nguon_id === null ? '' : h.nguon_id === 'QUY_CHUNG' ? ', quỹ chung' : `, ${memberName(h.nguon_id).toLowerCase()}`;
+    // Dòng lấy ra đi kèm khoản chi → "Chi từ hũ"
+    const label = h.giao_dich_id ? 'Chi từ hũ' : SAVINGS_LABEL[h.chieu];
+    return `• ${formatDay(h.ngay)} ${label} ${formatMoney(Number(h.so_tien ?? 0))} (${names.get(h.hu_id ?? DEFAULT_JAR_ID) ?? '?'}${who})`;
   });
-  return [`🏺 Hũ tiết kiệm đến ${formatDay(today)}: ${formatMoney(jar.tien)}`, 'Gần đây:', ...recent].join('\n');
+  return [...jarListLines(rows, today), ...(recent.length ? ['Gần đây:', ...recent] : []), '', SAVINGS_SYNTAX].join('\n');
+}
+
+// "/taohu Mua nhà 2 tỷ" → tên + mục tiêu (1–2 chữ cuối là số tiền)
+function splitNameAndAmount(args: string[], memberId: MemberId): { name: string; amount: number | null } {
+  for (const n of [2, 1]) {
+    if (args.length > n) {
+      const amount = parseMoneyArg(args.slice(-n).join(' '), memberId);
+      // Số trần dưới 10.000 ("2026") không phải mục tiêu
+      if (amount && amount >= 10_000) {
+        return { name: args.slice(0, -n).join(' '), amount };
+      }
+    }
+  }
+  return { name: args.join(' '), amount: null };
+}
+
+async function createJar(ctx: BotContext, member: ThanhVienRecord, args: string[]): Promise<string> {
+  const { name, amount } = splitNameAndAmount(args, member.id as MemberId);
+  if (!name.trim()) {
+    return `Thiếu tên hũ.\n${SAVINGS_SYNTAX}`;
+  }
+  try {
+    const { jar, created } = await ctx.savings.createJar(member, name, amount);
+    if (!created) {
+      return `Đã có hũ ${jar.ten}. Xem: /tietkiem`;
+    }
+    const goal = jar.muc_tieu ? ` · mục tiêu ${formatMoney(jar.muc_tieu)}` : '';
+    return `🏺 Đã tạo hũ ${jar.ten}${goal}.\nBỏ tiền: nhắn "bỏ hũ ${jar.ten.toLowerCase()} 5tr".`;
+  } catch (error) {
+    if (error instanceof DomainError) {
+      return error.code === 'FORBIDDEN' ? ignoredText('HU_NGUOI_GUI_KHONG_HOP_LE') : `Không tạo được: ${error.message}`;
+    }
+    throw error;
+  }
 }
 
 async function declareSavings(
@@ -108,26 +149,36 @@ async function declareSavings(
   updateId: number | undefined,
 ): Promise<BotAction[]> {
   const memberId = member.id as MemberId;
-  const amount = args.length > 0 ? parseMoneyArg(args.join(' '), memberId) : null;
+  // /tietkiemdau 50tr [tên hũ] — số tiền là 1–2 chữ đầu ("2 tỷ", "50 triệu")
+  let amount: number | null = null;
+  let nameFrom = 1;
+  for (const n of [2, 1]) {
+    const a = args.length >= n ? parseMoneyArg(args.slice(0, n).join(' '), memberId) : null;
+    if (a && a >= 10_000) {
+      amount = a;
+      nameFrom = n;
+      break;
+    }
+  }
   if (!amount || updateId === undefined) {
     return [{ type: 'send', chatId, text: `Chưa rõ số tiền.\n${SAVINGS_SYNTAX}` }];
   }
   let res;
   try {
-    res = await ctx.savings.declare(member, amount, `tg:${updateId}`);
+    res = await ctx.savings.declare(member, amount, `tg:${updateId}`, args.slice(nameFrom).join(' ') || null);
   } catch (error) {
-    if (error instanceof DomainError && error.code === 'FORBIDDEN') {
-      return [{ type: 'send', chatId, text: ignoredText('HU_NGUOI_GUI_KHONG_HOP_LE') }];
+    if (error instanceof DomainError && (error.code === 'FORBIDDEN' || error.code === 'NOT_FOUND')) {
+      return [{ type: 'send', chatId, text: ignoredText(error.message) }];
     }
     throw error;
   }
-  const { move, duplicate } = res;
+  const { move, jar, duplicate } = res;
   const actions: BotAction[] = [
-    { type: 'send', chatId, text: savingsText(move, false), ...(move.trang_thai === 'HOAN_TAT' ? { keyboard: cancelButton('hk', move.id) } : {}) },
+    { type: 'send', chatId, text: savingsText(move, jar, false), ...(move.trang_thai === 'HOAN_TAT' ? { keyboard: cancelButton('hk', move.id) } : {}) },
   ];
   const other = duplicate ? null : await memberChatId(ctx.db, otherMember(memberId));
   if (other !== null) {
-    actions.push({ type: 'send', chatId: other, text: savingsNoticeText(move) });
+    actions.push({ type: 'send', chatId: other, text: savingsNoticeText(move, jar) });
   }
   return actions;
 }

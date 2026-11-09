@@ -41,6 +41,7 @@ import type {
   ChuyenTienNoiBoRecord,
   DatabaseAdapter,
   GiaoDichRecord,
+  HuRecord,
   YeuCauXacNhanRecord,
 } from '../db/types.ts';
 import { parseVietnameseFinanceMessage } from '../parser/index.ts';
@@ -152,6 +153,8 @@ function isThuChi(loai: TransactionType): loai is 'THU' | 'CHI' {
 
 // Danh mục nợ không hiện trong bàn phím chọn danh mục (Q6)
 export const KEYBOARD_EXCLUDED_CATEGORIES: readonly string[] = [CATEGORY_CODE.THU_HOI_NO, CATEGORY_CODE.NO_CUA_ANH];
+// Loại được trả từ hũ (B): chi tiêu thật — thu / vay / trả nợ / điều chỉnh không
+const JAR_PAYABLE_TYPES: ReadonlySet<string> = new Set([TRANSACTION_TYPE.CHI, TRANSACTION_TYPE.PHI, TRANSACTION_TYPE.LAI_VAY]);
 const OTHER_CATEGORY = { THU: CATEGORY_CODE.THU_KHAC, CHI: CATEGORY_CODE.CHI_KHAC } as const;
 const DEBT_WORD = /(^|[^\p{L}\p{N}])nợ(?=$|[^\p{L}\p{N}])/u;
 
@@ -328,6 +331,11 @@ export class TransactionService {
     this.savings = new SavingsService(db, options);
   }
 
+  // Dùng chung 1 SavingsService với bot (danh sách tên hũ chỉ đọc 1 lần mỗi update)
+  get savingsService(): SavingsService {
+    return this.savings;
+  }
+
   // Tin nhắn thô: kiểm người gửi, parse theo ngày VN, rồi ghi giao dịch / chuyển tiền / quỹ chung.
   // Câu hỏi, báo cáo, không rõ ý → không ghi gì.
   async recordFromText(msg: IncomingMessage): Promise<RecordOutcome> {
@@ -338,6 +346,8 @@ export class TransactionService {
     const parsed = parseVietnameseFinanceMessage(msg.text, {
       senderId: member.id,
       referenceDate: toVnDate(new Date(msg.receivedAt)),
+      // "quỹ X" chỉ là hũ khi X là tên hũ đang có
+      jarNames: await this.savings.jarNames(),
     });
     if (parsed.intent === MESSAGE_INTENT.INTERNAL_TRANSFER) {
       return this.transfers.recordTransferFromParsed(msg, parsed, member);
@@ -365,7 +375,7 @@ export class TransactionService {
     }
     const now = this.now();
     const nowIso = now.toISOString();
-    return withDuplicateFallback(this.db, msg.updateId, () =>
+    const outcome = await withDuplicateFallback(this.db, msg.updateId, () =>
       this.db.transaction(async (tx): Promise<RecordOutcome> => {
         const messageId = await insertIncomingMessage(tx, msg, member.id, nowIso);
         if (!messageId) {
@@ -379,6 +389,17 @@ export class TransactionService {
         }
         const expiresAt = addDaysIso(now, CONFIRMATION_EXPIRY_DAYS);
         const resolved = await resolveCategory(tx, parsed);
+        // B: chi trả từ hũ — hũ phải có, chỉ khoản chi (thu / vay / trả nợ không lấy từ hũ)
+        let jar: HuRecord | null = null;
+        if (parsed.ten_hu_nguon !== null) {
+          jar = await this.savings.resolveJar(tx, parsed.ten_hu_nguon || null);
+          if (!jar) {
+            return ignoreMessage(tx, messageId, 'HU_KHONG_CO', nowIso);
+          }
+          if (!JAR_PAYABLE_TYPES.has(resolved.loai)) {
+            return ignoreMessage(tx, messageId, 'HU_CHI_HO_TRO_CHI', nowIso);
+          }
+        }
 
         // Q2: parser luôn gán người giữ tiền; null ở đây là lỗi lập trình
         if (!parsed.nguoi_giu_tien_id) {
@@ -396,6 +417,20 @@ export class TransactionService {
           ngayGiaoDich: parsed.ngay_giao_dich,
         });
         const transaction = await insertCompleted(tx, v, member.id, messageId, telegramKey(msg.updateId), nowIso);
+        if (jar) {
+          // Tiền từ hũ về người trả rồi chi ra → tiền mặt người trả không đổi, hũ giảm, chi tháng tăng
+          await this.savings.insertLinkedWithdrawal(tx, {
+            huId: jar.id,
+            soTien: v.soTien,
+            nguon: v.nguoiGiuTienId === 'CHUA_XAC_DINH' ? (member.id as MemberId) : v.nguoiGiuTienId,
+            memberId: member.id as MemberId,
+            ngay: v.ngayGiaoDich,
+            giaoDichId: transaction.id,
+            messageId,
+            key: `${telegramKey(msg.updateId)}:hu`,
+            nowIso,
+          });
+        }
 
         // DOI_TUONG_MOI không chặn ghi, chỉ kèm yêu cầu (tạo đối tượng mới ở Phase 5). Phân bổ đã bỏ (Phase 4).
         const confirmations: YeuCauXacNhanRecord[] = [];
@@ -424,9 +459,19 @@ export class TransactionService {
           transaction,
           confirmations,
           chonDanhMuc: resolved.chonDanhMuc,
+          hu: jar,
         };
       }),
     );
+    // Chi trả từ hũ làm hũ âm → cảnh báo (sau commit, không chặn; lỗi khi tính → bỏ cảnh báo)
+    if (outcome.kind === 'RECORDED' && outcome.hu && !outcome.duplicate) {
+      try {
+        outcome.canhBaoHuAm = (await this.savings.jarBalance(outcome.transaction.ngay_giao_dich, outcome.hu.id)) < 0;
+      } catch (error) {
+        console.error('Hũ: tính cảnh báo âm lỗi, bỏ cảnh báo', error);
+      }
+    }
+    return outcome;
   }
 
   // Q4: người tạo đổi danh mục (và loại THU↔CHI) của giao dịch ghi từ tin nhắn. UPDATE có điều kiện + audit.
@@ -452,6 +497,10 @@ export class TransactionService {
         return { changed: false, transaction: before };
       }
       const loai = change.loai ?? before.loai_giao_dich;
+      // Khoản chi trả từ hũ không đổi sang Thu (dòng lấy ra khỏi hũ đi kèm sẽ cộng tiền sai)
+      if (loai !== before.loai_giao_dich && (await this.savings.jarOfTransaction(tx, before.id))) {
+        throw new DomainError('NOT_SUPPORTED', 'Khoản chi trả từ hũ không đổi sang Thu được — huỷ rồi nhắn lại');
+      }
       if (!isThuChi(before.loai_giao_dich) || !isThuChi(loai)) {
         throw new DomainError('INVALID_INPUT', `Giao dịch ${before.loai_giao_dich} không đổi danh mục được`);
       }
@@ -631,6 +680,8 @@ export class TransactionService {
         await softDeleteDebtHistoryByTransaction(tx, before.id, nowIso);
         await recomputeLoan(tx, before.khoan_no_id, nowIso);
       }
+      // Khoản chi trả từ hũ → huỷ luôn dòng lấy ra khỏi hũ đi kèm (tiền về lại hũ)
+      await this.savings.cancelLinked(tx, before.id, nguoiHuyId, nowIso);
       if (before.source_message_id) {
         for (const c of await listConfirmationsByMessage(tx, before.source_message_id)) {
           if (c.trang_thai === CONFIRMATION_STATUS.CHO_XAC_NHAN) {

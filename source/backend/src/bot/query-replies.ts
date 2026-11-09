@@ -2,7 +2,7 @@ import type { GroupTotal, TxRow } from '../db/repositories/index.ts';
 import { ALL_TIME_FROM, type Period } from '../query/period-parser.ts';
 import type { QuerySpec } from '../query/types.ts';
 import { MAX_GROUPS, type QueryAnswer, type Sum } from '../services/query-service.ts';
-import { balanceSummaryLines, formatDay, formatMoney, holderName, memberName } from './replies.ts';
+import { balanceSummaryLines, formatDay, formatMoney, holderName, jarListLines, memberName } from './replies.ts';
 
 const TYPE_NAME: Record<string, string> = { LAI_VAY: 'Lãi vay', PHI: 'Phí' };
 
@@ -257,14 +257,21 @@ export function queryAnswerText(a: QueryAnswer, coSoTien: boolean): string {
     case 'CHUYEN_TIEN':
       lines = transferLines(a);
       break;
-    case 'HU_TIET_KIEM':
-      lines = a.flows
-        ? [
-            `🏺 Hũ tiết kiệm · ${periodText(a.spec.period)}: bỏ vào ${formatMoney(a.flows.nop)} (${a.flows.soNop} lần) · lấy ra ${formatMoney(a.flows.rut)} (${a.flows.soRut} lần)`,
-            `Hũ hiện có (đến ${formatDay(a.asOf)}): ${formatMoney(a.tien)}`,
-          ]
-        : [`🏺 Hũ tiết kiệm đến ${formatDay(a.asOf)}: ${formatMoney(a.tien)}`, 'Chi tiết: /tietkiem'];
+    case 'HU_TIET_KIEM': {
+      const name = a.jar ? `Hũ ${a.jar.ten}` : 'Các hũ';
+      if (a.flows) {
+        lines = [
+          `🏺 ${name} · ${periodText(a.spec.period)}: bỏ vào ${formatMoney(a.flows.nop)} (${a.flows.soNop} lần) · lấy ra ${formatMoney(a.flows.rut)} (${a.flows.soRut} lần)`,
+          `Hiện có (đến ${formatDay(a.asOf)}): ${formatMoney(a.tien)}`,
+        ];
+      } else if (a.jars) {
+        lines = [...jarListLines(a.jars, a.asOf), 'Chi tiết: /tietkiem'];
+      } else {
+        const goal = a.jar?.muc_tieu ? ` / ${formatMoney(a.jar.muc_tieu)}` : '';
+        lines = [`🏺 ${name} đến ${formatDay(a.asOf)}: ${formatMoney(a.tien)}${goal}`, 'Chi tiết: /tietkiem'];
+      }
       break;
+    }
   }
   return [...lines, ...(coSoTien ? [RECORD_HINT] : [])].join('\n');
 }

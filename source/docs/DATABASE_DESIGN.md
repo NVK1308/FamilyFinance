@@ -227,6 +227,12 @@ erDiagram
 - Hũ (tiền) = Σ KHAI_BAO + Σ NOP − Σ RUT (loại TIEN, đến ngày hỏi). `/sodu` hiện thêm hũ + "Tổng tài sản (ước tính)" khi hũ ≠ 0.
 - Đồng bộ desktop (Phase 7): có trong `syncTablesOrder`.
 
+### 3.1d. Nhiều hũ — bảng `hu` (migration 0005 — bảng thứ 19)
+- `hu`: id (`TIET_KIEM` = hũ mặc định, seed trong migration; còn lại `HU_<uuid>`), `ten`, `ten_khong_dau` (bỏ dấu, chữ thường — khớp tên trong tin nhắn; **duy nhất trong các hũ chưa xoá**: partial unique index), `muc_tieu` (tuỳ chọn, > 0), `nguoi_tao_id`, `is_active`, version/xoá mềm.
+- `hu_tiet_kiem.hu_id` (FK `hu`; NULL được do SQLite ADD COLUMN có REFERENCES phải default NULL — migration gán dòng cũ = `TIET_KIEM`, truy vấn dùng `COALESCE(hu_id, 'TIET_KIEM')`).
+- `hu_tiet_kiem.giao_dich_id` (FK `giao_dich`, partial UNIQUE): dòng `RUT` đi kèm **khoản chi trả từ hũ** — cùng ngày, cùng số tiền, nguồn = người giữ của giao dịch → tiền mặt người trả không đổi, hũ giảm, chi tháng tăng. Huỷ giao dịch → huỷ dòng đi kèm cùng transaction; không huỷ riêng được; giao dịch này không đổi sang Thu.
+- SQLite: phần ALTER của 0005 chỉ chạy 1 lần (runner theo dõi số migration). Neon: `temp/neon/06_nhieu_hu.sql` (tự dừng nếu chưa chạy 05).
+
 ### 3.2. Ràng buộc trên bảng `chuyen_tien_noi_bo`
 - `nguoi_chuyen_id <> nguoi_nhan_id`: Không thể tự chuyển cho chính mình.
 - `so_tien > 0`.

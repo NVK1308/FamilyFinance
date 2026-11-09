@@ -8,7 +8,7 @@ export interface AmountParseResult {
 }
 
 const AMOUNT_TOKEN_REGEX =
-  /\b(?:(\d+)\s*(?:tr|trieu|m|cu)\s*(\d{1,3})\b|(\d+(?:[.,]\d+)?)\s*(tr|trieu|m|cu|k|nghin|ngan)\b|(\d{1,3}(?:[.,]\d{3})+)\s*(?:d|vnd)?\b|(\d{4,})\s*(?:d|vnd)?\b)/gi;
+  /\b(?:(\d+)\s*(?:tr|trieu|m|cu)\s*(\d{1,3})\b|(\d+(?:[.,]\d+)?)\s*(ty|tr|trieu|m|cu|k|nghin|ngan)\b|(\d{1,3}(?:[.,]\d{3})+)\s*(?:d|vnd)?\b|(\d{4,})\s*(?:d|vnd)?\b)/gi;
 
 function parseSingleMatch(match: RegExpExecArray): number | null {
   // 1. Dạng 1tr5, 2tr25, 1m5
@@ -20,7 +20,7 @@ function parseSingleMatch(match: RegExpExecArray): number | null {
     return total > 0 ? Math.round(total) : null;
   }
 
-  // 2. Dạng 20tr, 1.5 triệu, 2,5tr, 50k, 50 nghìn
+  // 2. Dạng 20tr, 1.5 triệu, 2,5tr, 50k, 50 nghìn, 2 tỷ / 1,5 tỷ
   if (match[3] !== undefined && match[4] !== undefined) {
     const rawNum = match[3].replace(',', '.');
     const value = Number(rawNum);
@@ -29,8 +29,9 @@ function parseSingleMatch(match: RegExpExecArray): number | null {
     }
     const unit = match[4].toLowerCase();
     const multiplier =
-      unit === 'k' || unit === 'nghin' || unit === 'ngan' ? 1_000 : 1_000_000;
-    return Math.round(value * multiplier);
+      unit === 'ty' ? 1_000_000_000 : unit === 'k' || unit === 'nghin' || unit === 'ngan' ? 1_000 : 1_000_000;
+    const total = Math.round(value * multiplier);
+    return Number.isSafeInteger(total) ? total : null;
   }
 
   // 3. Dạng phân tách hàng nghìn: 1.200.000, 1,200,000d, 500.000
@@ -52,7 +53,14 @@ function parseSingleMatch(match: RegExpExecArray): number | null {
 // "3 hay 4 triệu", "2 hoặc 3tr": hai số chung 1 đơn vị → mơ hồ (quy tắc hẹp, không đụng câu khác).
 // Số đầu đứng sau tháng/ngày/tuần/năm/lần ("tiền điện tháng 10 hay 500k") thì không tính.
 const ALTERNATIVE_AMOUNT_REGEX =
-  /(?<!\b(?:thang|ngay|tuan|nam|lan)\s+)\b\d+(?:[.,]\d+)?\s*(?:hay|hoac)\s*\d+(?:[.,]\d+)?\s*(?:tr|trieu|m|cu|k|nghin|ngan)\b/i;
+  /(?<!\b(?:thang|ngay|tuan|nam|lan)\s+)\b\d+(?:[.,]\d+)?\s*(?:hay|hoac)\s*\d+(?:[.,]\d+)?\s*(?:ty|tr|trieu|m|cu|k|nghin|ngan)\b/i;
+
+const TY_ACCENTED = /\d\s*(?:tỷ|tỉ)(?=$|[\s?.!,])/u;
+
+function hasDiacritics(text: string): boolean {
+  // eslint-disable-next-line no-control-regex
+  return /[^\u0000-\u007f]/.test(text);
+}
 
 export function extractAmountVnd(ctx: ParseContext): AmountParseResult {
   const text = ctx.workingAsciiText;
@@ -64,10 +72,12 @@ export function extractAmountVnd(ctx: ParseContext): AmountParseResult {
   const regex = new RegExp(AMOUNT_TOKEN_REGEX.source, 'gi');
   const parsedValues: number[] = [];
   const matchedTokens: string[] = [];
+  // "ty" bỏ dấu = tỷ / tỉ hoặc "tý" (một chút): câu có dấu phải viết "tỷ"/"tỉ"
+  const allowTy = !hasDiacritics(ctx.normalizedText) || TY_ACCENTED.test(ctx.normalizedText);
 
   let match: RegExpExecArray | null = regex.exec(text);
   while (match !== null) {
-    const val = parseSingleMatch(match);
+    const val = match[4]?.toLowerCase() === 'ty' && !allowTy ? null : parseSingleMatch(match);
     if (val !== null) {
       parsedValues.push(val);
       matchedTokens.push(match[0]);

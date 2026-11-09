@@ -8,6 +8,8 @@ import {
   sumPendingTransfers,
   sumTransactions,
   sumIncomeExpense,
+  getJarByNormalizedName,
+  sumSavingsCash,
   sumSavingsFlows,
   sumTransfersFiltered,
   type GroupTotal,
@@ -15,10 +17,11 @@ import {
   type TxRow,
   type TxQueryFilter,
 } from '../db/repositories/index.ts';
-import type { DatabaseAdapter } from '../db/types.ts';
+import type { DatabaseAdapter, HuRecord } from '../db/types.ts';
 import type { Period } from '../query/period-parser.ts';
 import type { QuerySpec } from '../query/types.ts';
 import { BalanceService, type HolderBalancesResult } from './balance-service.ts';
+import { SavingsService } from './savings-service.ts';
 import type { ServiceOptions } from './common.ts';
 
 // Chi = CHI + PHI + LAI_VAY; Thu = THU (Runbook 4.1). VAY/TRA_NO/DIEU_CHINH, chuyển nội bộ, quỹ không tính.
@@ -50,9 +53,13 @@ export type QueryAnswer =
       kind: 'HU_TIET_KIEM';
       spec: QuerySpec;
       asOf: string;
+      // Hũ được hỏi; null = mọi hũ
+      jar: HuRecord | null;
       tien: number;
       // Hỏi dòng tiền trong kỳ (savingsFlow)
       flows: { nop: number; soNop: number; rut: number; soRut: number } | null;
+      // Hỏi số dư mọi hũ → từng hũ
+      jars: Array<{ jar: HuRecord; tien: number }> | null;
     }
   | { kind: 'THEO_DANH_MUC' | 'THEO_DOI_TUONG'; spec: QuerySpec; tong: Sum; nhom: GroupTotal[] }
   | { kind: 'AI_NHIEU_NHAT'; spec: QuerySpec; tong: Sum; nhom: GroupTotal[] }
@@ -73,10 +80,12 @@ export interface PeriodTotals {
 export class QueryService {
   private readonly db: DatabaseAdapter;
   private readonly balances: BalanceService;
+  private readonly savings: SavingsService;
 
   constructor(db: DatabaseAdapter, options?: ServiceOptions) {
     this.db = db;
     this.balances = new BalanceService(db, options);
+    this.savings = new SavingsService(db, options);
   }
 
   // Chỉ đọc DB. today = ngày VN của tin nhắn (số dư kỳ chưa hết tính tới hôm nay).
@@ -98,8 +107,19 @@ export class QueryService {
       }
       case 'HU_TIET_KIEM': {
         const asOf = spec.period.to < today ? spec.period.to : today;
-        const flows = spec.savingsFlow ? await sumSavingsFlows(this.db, spec.period.from, spec.period.to) : null;
-        return { kind: 'HU_TIET_KIEM', spec, asOf, tien: (await this.balances.getSavingsJar(asOf)).tien, flows };
+        // 1 hũ ("quỹ y tế còn bao nhiêu") hoặc mọi hũ
+        const jar = spec.huTen ? await getJarByNormalizedName(this.db, spec.huTen) : null;
+        if (!jar && !spec.savingsFlow) {
+          // Số dư mọi hũ: từng hũ + tổng (cùng hàm với /tietkiem)
+          const jars = await this.savings.listJarBalances(asOf);
+          return { kind: 'HU_TIET_KIEM', spec, asOf, jar, tien: jars.reduce((s, r) => s + r.tien, 0), flows: null, jars };
+        }
+        const huId = jar?.id ?? null;
+        const [flows, cash] = await Promise.all([
+          spec.savingsFlow ? sumSavingsFlows(this.db, spec.period.from, spec.period.to, huId) : null,
+          sumSavingsCash(this.db, asOf, huId),
+        ]);
+        return { kind: 'HU_TIET_KIEM', spec, asOf, jar, tien: cash.tien, flows, jars: null };
       }
       case 'THEO_DANH_MUC':
       case 'THEO_DOI_TUONG': {

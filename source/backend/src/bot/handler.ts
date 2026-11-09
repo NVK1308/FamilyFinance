@@ -8,7 +8,7 @@ import {
   listActiveCategoriesFor,
   updateMessageStatus,
 } from '../db/repositories/index.ts';
-import type { ChuyenTienNoiBoRecord, DatabaseAdapter, GiaoDichRecord, ThanhVienRecord } from '../db/types.ts';
+import type { ChuyenTienNoiBoRecord, DatabaseAdapter, GiaoDichRecord, HuRecord, ThanhVienRecord } from '../db/types.ts';
 import { isActionRequest } from '../parser/intent-classifier.ts';
 import { parseQuery } from '../query/query-parser.ts';
 import { BalanceService } from '../services/balance-service.ts';
@@ -35,6 +35,7 @@ import {
   formatDay,
   formatMoney,
   fundNoticeText,
+  jarExpenseNoticeText,
   savingsCancelNoticeText,
   savingsNoticeText,
   savingsText,
@@ -60,14 +61,15 @@ export interface BotContext {
 
 export function createBotContext(db: DatabaseAdapter, now: () => Date = () => new Date()): BotContext {
   const options = { now };
+  const txs = new TransactionService(db, options);
   return {
     db,
     now,
-    txs: new TransactionService(db, options),
+    txs,
     transfers: new TransferService(db, options),
     balances: new BalanceService(db, options),
     queries: new QueryService(db, options),
-    savings: new SavingsService(db, options),
+    savings: txs.savingsService,
   };
 }
 
@@ -164,18 +166,23 @@ async function categoryName(db: DatabaseAdapter, tx: GiaoDichRecord): Promise<st
 }
 
 // Tin + bàn phím của giao dịch theo trạng thái DB hiện tại
+// jar: hũ nguồn nếu là khoản chi trả từ hũ (undefined → tự tra)
 async function transactionView(
-  db: DatabaseAdapter,
+  ctx: BotContext,
   tx: GiaoDichRecord,
   chonDanhMuc: boolean,
+  jar?: HuRecord | null,
 ): Promise<{ text: string; keyboard?: InlineKeyboard }> {
-  const text = transactionText(tx, await categoryName(db, tx), chonDanhMuc);
+  const db = ctx.db;
+  const hu = jar === undefined ? await ctx.savings.jarOfTransaction(db, tx.id) : jar;
+  const text = transactionText(tx, await categoryName(db, tx), chonDanhMuc, hu?.ten ?? null);
   if (tx.trang_thai !== 'HOAN_TAT') {
     return { text };
   }
   if (chonDanhMuc && (tx.loai_giao_dich === 'THU' || tx.loai_giao_dich === 'CHI')) {
     const categories = await listActiveCategoriesFor(db, tx.loai_giao_dich, KEYBOARD_EXCLUDED_CATEGORIES);
-    return { text, keyboard: categoryKeyboard(tx, categories) };
+    // Chi trả từ hũ: chỉ đổi danh mục trong loại Chi, không có nút đổi sang Thu
+    return { text, keyboard: categoryKeyboard(tx, categories, hu === null) };
   }
   return { text, keyboard: cancelButton('gd', tx.id) };
 }
@@ -197,8 +204,15 @@ async function outcomeActions(
   });
   switch (outcome.kind) {
     case 'RECORDED': {
-      const view = await transactionView(ctx.db, outcome.transaction, outcome.chonDanhMuc);
-      return [send(view.text, view.keyboard)];
+      const view = await transactionView(ctx, outcome.transaction, outcome.chonDanhMuc, outcome.hu);
+      const warn = outcome.canhBaoHuAm ? `\n⚠️ Hũ ${outcome.hu?.ten} bị âm — kiểm tra lại.` : '';
+      const actions: BotAction[] = [send(`${view.text}${warn}`, view.keyboard)];
+      // Chi từ hũ chung → báo người kia (như bỏ / lấy hũ)
+      const other = outcome.hu && !outcome.duplicate ? await memberChatId(ctx.db, otherMember(member.id)) : null;
+      if (other !== null && outcome.hu) {
+        actions.push({ type: 'send', chatId: other, text: jarExpenseNoticeText(outcome.transaction, outcome.hu, member.id) });
+      }
+      return actions;
     }
     case 'PENDING':
       return [send('Tin này đang chờ xác nhận.')];
@@ -217,10 +231,10 @@ async function outcomeActions(
     }
     case 'SAVINGS_MOVE': {
       const h = outcome.move;
-      const actions: BotAction[] = [send(savingsText(h, outcome.canhBaoVuotSoDu), h.trang_thai === 'HOAN_TAT' ? cancelButton('hk', h.id) : undefined)];
+      const actions: BotAction[] = [send(savingsText(h, outcome.jar, outcome.canhBaoVuotSoDu), h.trang_thai === 'HOAN_TAT' ? cancelButton('hk', h.id) : undefined)];
       const other = outcome.duplicate ? null : await memberChatId(ctx.db, otherMember(h.thanh_vien_id));
       if (other !== null) {
-        actions.push({ type: 'send', chatId: other, text: savingsNoticeText(h) });
+        actions.push({ type: 'send', chatId: other, text: savingsNoticeText(h, outcome.jar) });
       }
       return actions;
     }
@@ -258,7 +272,7 @@ async function answerQuestion(
   incoming: IncomingMessage,
   parsed: ParsedQueryOrOtherResult,
 ): Promise<string> {
-  const spec = parseQuery(incoming.text, parsed.ngay_tham_chieu);
+  const spec = parseQuery(incoming.text, parsed.ngay_tham_chieu, await ctx.savings.jarNames());
   if (!spec) {
     const nowIso = ctx.now().toISOString();
     await ctx.db.transaction(async (tx) => {
@@ -360,13 +374,13 @@ async function runCallback(
           : { loai: data.to, maDanhMuc: data.to === 'THU' ? 'THU_KHAC' : 'CHI_KHAC' };
       const res = await ctx.txs.changeCategory(data.id, me, change);
       // Đổi Thu↔Chi → hiện bàn phím loại mới; chọn danh mục xong → chỉ còn Huỷ
-      const view = await transactionView(ctx.db, res.transaction, data.kind === 'lt');
+      const view = await transactionView(ctx, res.transaction, data.kind === 'lt');
       const note = res.transaction.trang_thai === 'DA_HUY' ? 'Khoản này đã huỷ.' : res.changed ? 'Đã đổi' : undefined;
       return [answer(note), ...edit(view.text, view.keyboard)];
     }
     case 'gd': {
       const res = await ctx.txs.cancelTransaction(data.id, me, 'Huỷ qua bot', { chiNguoiTao: true });
-      const view = await transactionView(ctx.db, res.transaction, false);
+      const view = await transactionView(ctx, res.transaction, false);
       return [answer(res.changed ? 'Đã huỷ' : 'Khoản này đã huỷ trước đó.'), ...edit(view.text, view.keyboard)];
     }
     case 'ct': {
@@ -398,10 +412,10 @@ async function runCallback(
     }
     case 'hk': {
       const res = await ctx.savings.cancel(data.id, me);
-      const actions: BotAction[] = [answer(res.changed ? 'Đã huỷ' : 'Khoản này đã huỷ trước đó.'), ...edit(savingsText(res.move, false))];
+      const actions: BotAction[] = [answer(res.changed ? 'Đã huỷ' : 'Khoản này đã huỷ trước đó.'), ...edit(savingsText(res.move, res.jar, false))];
       const other = res.changed ? await memberChatId(ctx.db, otherMember(res.move.thanh_vien_id)) : null;
       if (other !== null) {
-        actions.push({ type: 'send', chatId: other, text: savingsCancelNoticeText(res.move, me) });
+        actions.push({ type: 'send', chatId: other, text: savingsCancelNoticeText(res.move, res.jar, me) });
       }
       return actions;
     }

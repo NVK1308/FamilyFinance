@@ -1,10 +1,12 @@
-import { CATEGORY_CODE, CONFIRMATION_TYPE, MESSAGE_STATUS, type MemberId } from '../config/constants.ts';
+import { CATEGORY_CODE, CONFIRMATION_TYPE, DEFAULT_JAR_ID, MESSAGE_STATUS, type MemberId } from '../config/constants.ts';
 import {
   getCategoryById,
   getFundMoveByIdempotencyKey,
   getMessageById,
   getMessageByUpdateId,
+  getJarById,
   getSavingsMoveByIdempotencyKey,
+  getSavingsMoveByTransaction,
   getTransactionByIdempotencyKey,
   getTransferByIdempotencyKey,
   insertMessageIfNew,
@@ -16,6 +18,7 @@ import type {
   ChuyenTienNoiBoRecord,
   DatabaseAdapter,
   GiaoDichRecord,
+  HuRecord,
   HuTietKiemRecord,
   TinNhanGocRecord,
   YeuCauXacNhanRecord,
@@ -42,6 +45,10 @@ export type RecordOutcome =
       confirmations: YeuCauXacNhanRecord[];
       // Q4: ghi vào danh mục mặc định / chưa rõ loại → bot hiện nút đổi danh mục
       chonDanhMuc: boolean;
+      // Khoản chi trả từ hũ (B): hũ nguồn; null = chi thường
+      hu: HuRecord | null;
+      // Hũ nguồn bị âm sau khoản chi (chỉ cảnh báo)
+      canhBaoHuAm?: boolean;
     }
   | { kind: 'PENDING'; duplicate: boolean; message: TinNhanGocRecord; confirmations: YeuCauXacNhanRecord[] }
   | {
@@ -65,6 +72,7 @@ export type RecordOutcome =
       duplicate: boolean;
       message: TinNhanGocRecord;
       move: HuTietKiemRecord;
+      jar: HuRecord;
       // Bỏ vào nhiều hơn nguồn đang giữ / lấy ra nhiều hơn hũ đang có (chỉ cảnh báo)
       canhBaoVuotSoDu: boolean;
     }
@@ -128,7 +136,10 @@ export async function loadExistingOutcome(db: DatabaseAdapter, updateId: number)
   if (transaction) {
     const category = transaction.danh_muc_id ? await getCategoryById(db, transaction.danh_muc_id) : null;
     const chonDanhMuc = category?.ma_danh_muc === CATEGORY_CODE.CHI_KHAC || category?.ma_danh_muc === CATEGORY_CODE.THU_KHAC;
-    return { kind: 'RECORDED', duplicate: true, message, transaction, confirmations, chonDanhMuc };
+    // Gửi lại update của khoản chi trả từ hũ → trả lời giống lần đầu (có tên hũ, không nút Thu/Chi)
+    const linked = await getSavingsMoveByTransaction(db, transaction.id);
+    const hu = linked ? await getJarById(db, linked.hu_id ?? DEFAULT_JAR_ID) : null;
+    return { kind: 'RECORDED', duplicate: true, message, transaction, confirmations, chonDanhMuc, hu };
   }
   const transfer = await getTransferByIdempotencyKey(db, key);
   if (transfer) {
@@ -141,7 +152,11 @@ export async function loadExistingOutcome(db: DatabaseAdapter, updateId: number)
   }
   const move = await getSavingsMoveByIdempotencyKey(db, key);
   if (move) {
-    return { kind: 'SAVINGS_MOVE', duplicate: true, message, move, canhBaoVuotSoDu: false };
+    const jar = await getJarById(db, move.hu_id ?? DEFAULT_JAR_ID);
+    if (!jar) {
+      throw new Error(`Dòng hũ ${move.id} trỏ tới hũ không có: ${move.hu_id}`);
+    }
+    return { kind: 'SAVINGS_MOVE', duplicate: true, message, move, jar, canhBaoVuotSoDu: false };
   }
   if (message.trang_thai_xu_ly === MESSAGE_STATUS.LOI) {
     return { kind: 'IGNORED', duplicate: true, message, reason: MESSAGE_STATUS.LOI };

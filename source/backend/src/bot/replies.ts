@@ -1,5 +1,5 @@
 import type { MemberId, MoneyHolderId, TransactionType } from '../config/constants.ts';
-import type { ChuyenQuyChungRecord, ChuyenTienNoiBoRecord, DanhMucRecord, GiaoDichRecord, HuTietKiemRecord } from '../db/types.ts';
+import type { ChuyenQuyChungRecord, ChuyenTienNoiBoRecord, DanhMucRecord, GiaoDichRecord, HuRecord, HuTietKiemRecord } from '../db/types.ts';
 import type { InlineKeyboard } from '../telegram/types.ts';
 import { categoryCodeFits, encodeCallback } from './callback-data.ts';
 
@@ -80,12 +80,14 @@ export function transactionLine(tx: GiaoDichRecord, categoryName: string | null)
   return parts.join(' · ');
 }
 
-export function transactionText(tx: GiaoDichRecord, categoryName: string | null, chonDanhMuc = false): string {
+// jarName: khoản chi trả từ hũ (B)
+export function transactionText(tx: GiaoDichRecord, categoryName: string | null, chonDanhMuc = false, jarName: string | null = null): string {
+  const line = `${transactionLine(tx, categoryName)}${jarName ? ` · từ hũ ${jarName}` : ''}`;
   if (tx.trang_thai === 'DA_HUY') {
-    return `❌ Đã huỷ: ${transactionLine(tx, categoryName)}`;
+    return `❌ Đã huỷ: ${line}`;
   }
   const hint = chonDanhMuc ? '\nChọn danh mục nếu muốn (không chọn → giữ nguyên).' : '';
-  return `✅ ${transactionLine(tx, categoryName)}${hint}`;
+  return `✅ ${line}${hint}`;
 }
 
 export function cancelButton(kind: 'gd' | 'ct' | 'qc' | 'hk', id: string, label = 'Huỷ'): InlineKeyboard {
@@ -93,7 +95,8 @@ export function cancelButton(kind: 'gd' | 'ct' | 'qc' | 'hk', id: string, label 
 }
 
 // Q4: 3 nút/hàng + đổi Thu↔Chi + Huỷ
-export function categoryKeyboard(tx: GiaoDichRecord, categories: readonly DanhMucRecord[]): InlineKeyboard {
+// typeSwitch = false: khoản chi trả từ hũ — không cho đổi sang Thu
+export function categoryKeyboard(tx: GiaoDichRecord, categories: readonly DanhMucRecord[], typeSwitch = true): InlineKeyboard {
   const rows: InlineKeyboard = [];
   const usable = categories.filter((c) => categoryCodeFits(tx.id, c.ma_danh_muc));
   for (let i = 0; i < usable.length; i += 3) {
@@ -104,8 +107,10 @@ export function categoryKeyboard(tx: GiaoDichRecord, categories: readonly DanhMu
       })),
     );
   }
-  const to = tx.loai_giao_dich === 'THU' ? 'CHI' : 'THU';
-  rows.push([{ text: `Đổi sang ${to === 'THU' ? 'Thu' : 'Chi'}`, callback_data: encodeCallback({ kind: 'lt', id: tx.id, to }) }]);
+  if (typeSwitch) {
+    const to = tx.loai_giao_dich === 'THU' ? 'CHI' : 'THU';
+    rows.push([{ text: `Đổi sang ${to === 'THU' ? 'Thu' : 'Chi'}`, callback_data: encodeCallback({ kind: 'lt', id: tx.id, to }) }]);
+  }
   rows.push(...cancelButton('gd', tx.id));
   return rows;
 }
@@ -178,11 +183,17 @@ export function balanceSummaryLines(nhom: Record<MoneyHolderId, number>, tong: n
 
 // ---------- Hũ tiết kiệm ----------
 
-const SAVINGS_ACTION: Record<string, string> = {
-  KHAI_BAO: 'Khai báo hũ tiết kiệm',
-  NOP: 'Bỏ hũ tiết kiệm',
-  RUT: 'Lấy ra từ hũ tiết kiệm',
+const SAVINGS_VERB: Record<string, string> = {
+  KHAI_BAO: 'khai báo',
+  NOP: 'bỏ',
+  RUT: 'lấy ra từ',
 };
+
+// "bỏ hũ Mua nhà" / "Bỏ hũ Mua nhà"
+function savingsAction(f: HuTietKiemRecord, jar: HuRecord, capital: boolean): string {
+  const verb = SAVINGS_VERB[f.chieu] ?? f.chieu;
+  return `${capital ? verb.charAt(0).toUpperCase() + verb.slice(1) : verb} hũ ${jar.ten}`;
+}
 
 // "từ quỹ chung" / "vợ trả" (bỏ vào) — "vào quỹ chung" / "vợ nhận" (lấy ra)
 function savingsSource(f: HuTietKiemRecord): string {
@@ -196,7 +207,7 @@ function savingsSource(f: HuTietKiemRecord): string {
   return `${memberName(f.nguon_id).toLowerCase()} ${from ? 'trả' : 'nhận'}`;
 }
 
-export function savingsText(f: HuTietKiemRecord, overBalance: boolean): string {
+export function savingsText(f: HuTietKiemRecord, jar: HuRecord, overBalance: boolean): string {
   const prefix = f.trang_thai === 'DA_HUY' ? '❌ Đã huỷ: ' : '🏺 ';
   const amount = f.so_tien === null ? '' : ` ${formatMoney(Number(f.so_tien))}`;
   const warn = !overBalance
@@ -208,21 +219,36 @@ export function savingsText(f: HuTietKiemRecord, overBalance: boolean): string {
     f.chieu === 'KHAI_BAO' && f.trang_thai !== 'DA_HUY'
       ? '\nLưu ý: tiền này không được nằm sẵn trong số dư ban đầu của vợ/chồng/quỹ (sẽ bị tính 2 lần).'
       : '';
-  return `${prefix}${SAVINGS_ACTION[f.chieu]}${amount} · ${savingsSource(f)} · ${formatDay(f.ngay)}${warn}${note}`;
+  return `${prefix}${savingsAction(f, jar, true)}${amount} · ${savingsSource(f)} · ${formatDay(f.ngay)}${warn}${note}`;
 }
 
-// "bỏ hũ tiết kiệm 1.000.000đ (vợ trả, 05/11)." — dùng cho tin báo ghi và báo huỷ
-function savingsNoticeBody(f: HuTietKiemRecord): string {
+// "bỏ hũ Mua nhà 1.000.000đ (vợ trả, 05/11)." — dùng cho tin báo ghi và báo huỷ
+function savingsNoticeBody(f: HuTietKiemRecord, jar: HuRecord): string {
   const amount = f.so_tien === null ? '' : ` ${formatMoney(Number(f.so_tien))}`;
-  return `${SAVINGS_ACTION[f.chieu]!.toLowerCase()}${amount} (${savingsSource(f)}, ${formatDay(f.ngay)}).`;
+  return `${savingsAction(f, jar, false)}${amount} (${savingsSource(f)}, ${formatDay(f.ngay)}).`;
 }
 
-export function savingsNoticeText(f: HuTietKiemRecord): string {
-  return `ℹ️ ${memberName(f.thanh_vien_id)}: ${savingsNoticeBody(f)}`;
+export function savingsNoticeText(f: HuTietKiemRecord, jar: HuRecord): string {
+  return `ℹ️ ${memberName(f.thanh_vien_id)}: ${savingsNoticeBody(f, jar)}`;
 }
 
-export function savingsCancelNoticeText(f: HuTietKiemRecord, nguoiHuy: string): string {
-  return `ℹ️ ${memberName(nguoiHuy)} đã huỷ: ${savingsNoticeBody(f)}`;
+export function savingsCancelNoticeText(f: HuTietKiemRecord, jar: HuRecord, nguoiHuy: string): string {
+  return `ℹ️ ${memberName(nguoiHuy)} đã huỷ: ${savingsNoticeBody(f, jar)}`;
+}
+
+// Báo người kia: khoản chi trả từ hũ chung
+export function jarExpenseNoticeText(tx: GiaoDichRecord, jar: HuRecord, by: string): string {
+  return `ℹ️ ${memberName(by)}: chi ${formatMoney(Number(tx.so_tien))} từ hũ ${jar.ten} (${formatDay(tx.ngay_giao_dich)}).`;
+}
+
+// /tietkiem: từng hũ (số tiền, % mục tiêu) + tổng
+export function jarListLines(rows: ReadonlyArray<{ jar: HuRecord; tien: number }>, asOf: string): string[] {
+  const lines = rows.map(({ jar, tien }) => {
+    const goal = jar.muc_tieu ? ` / ${formatMoney(jar.muc_tieu)} (${Math.floor((Math.max(tien, 0) * 100) / jar.muc_tieu)}%)` : '';
+    return `• ${jar.ten}: ${formatMoney(tien)}${goal}`;
+  });
+  const total = rows.reduce((s, r) => s + r.tien, 0);
+  return [`🏺 Hũ đến ${formatDay(asOf)}:`, ...lines, `Tổng hũ: ${formatMoney(total)}`];
 }
 
 // ---------- Bỏ qua / hướng dẫn ----------
@@ -241,6 +267,8 @@ const IGNORED_TEXT: Record<string, string> = {
   NGUOI_NHAN_KHONG_HOP_LE: 'Người nhận không hợp lệ.',
   NGUOI_GUI_KHONG_HOP_LE: 'Tài khoản này không ghi quỹ chung được.',
   HU_NGUOI_GUI_KHONG_HOP_LE: 'Tài khoản này không ghi hũ tiết kiệm được.',
+  HU_KHONG_CO: 'Chưa có hũ tên này. Xem các hũ: /tietkiem · tạo hũ: /taohu <tên> [mục tiêu], vd /taohu Mua nhà 2 tỷ',
+  HU_CHI_HO_TRO_CHI: 'Chỉ khoản chi mới trả từ hũ được.',
   HU_NGUON_KHONG_RO: "Chưa rõ tiền lấy từ đâu — nhắn 'lấy quỹ chung bỏ hũ 2tr' hoặc 'bỏ hũ 2tr' (trừ tiền của bạn).",
   DA_HUY: 'Khoản này đã huỷ.',
   HET_HAN: 'Khoản này đã hết hạn.',
@@ -266,7 +294,7 @@ export const HELP_TEXT = [
   '/cho — khoản chuyển đang chờ',
   '/ghichu — ghi chú nợ',
   '/sodudau <vợ> <chồng> <quỹ> — nhập số dư ban đầu (1 lần)',
-  '/tietkiem — hũ tiết kiệm · /tietkiemdau <tiền> — khai báo tiền đang để dành',
+  '/tietkiem — các hũ · /taohu <tên> [mục tiêu] — tạo hũ · /tietkiemdau <tiền> [hũ] — khai báo tiền đang để dành',
 ].join('\n');
 
 export const SHORT_HELP = "Chưa hiểu tin này. Nhắn kiểu 'tiền ăn 50k', hoặc /help.";

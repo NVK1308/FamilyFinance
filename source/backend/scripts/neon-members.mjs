@@ -22,7 +22,9 @@ async function main() {
          (SELECT COUNT(*) FROM thanh_vien)::int AS so_thanh_vien,
          (SELECT COUNT(*) FROM doi_tuong_thu_huong WHERE id = 'CAC_CON')::int AS co_cac_con,
          (SELECT COUNT(*) FROM information_schema.tables
-            WHERE table_schema = 'public' AND table_name = 'hu_tiet_kiem')::int AS co_hu_tiet_kiem`,
+            WHERE table_schema = 'public' AND table_name = 'hu_tiet_kiem')::int AS co_hu_tiet_kiem,
+         (SELECT COUNT(*) FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'hu_tiet_kiem' AND column_name = 'hu_id')::int AS co_nhieu_hu`,
     );
     console.log(JSON.stringify(rows[0]));
     return;

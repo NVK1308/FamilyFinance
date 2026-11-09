@@ -159,6 +159,9 @@ export type AssetType = (typeof ASSET_TYPE)[keyof typeof ASSET_TYPE];
 // Nhóm tiền mặt làm nguồn / đích của hũ (không có CHUA_XAC_DINH)
 export type SavingsSourceId = 'VO' | 'CHONG' | 'QUY_CHUNG';
 
+// Hũ mặc định (seed migration 0005): câu không nêu tên hũ → hũ này
+export const DEFAULT_JAR_ID = 'TIET_KIEM';
+
 // Chiều của giao dịch DIEU_CHINH (migration 0002)
 export const ADJUSTMENT_DIRECTION = {
   TANG: 'TANG',
@@ -194,6 +197,7 @@ export const TABLE_NAME = {
   CHUYEN_TIEN_NOI_BO: 'chuyen_tien_noi_bo',
   CHUYEN_QUY_CHUNG: 'chuyen_quy_chung',
   HU_TIET_KIEM: 'hu_tiet_kiem',
+  HU: 'hu',
   LICH_SU_NO: 'lich_su_no',
   YEU_CAU_XAC_NHAN: 'yeu_cau_xac_nhan',
   LICH_SU_CHINH_SUA: 'lich_su_chinh_sua',

@@ -195,6 +195,19 @@ export interface ChuyenTienNoiBoRecord {
   deleted_at: string | null;
 }
 
+export interface HuRecord {
+  id: string;
+  ten: string;
+  ten_khong_dau: string;
+  muc_tieu: number | null;
+  nguoi_tao_id: string | null;
+  is_active: boolean | number;
+  created_at: string;
+  updated_at: string;
+  version: number;
+  deleted_at: string | null;
+}
+
 export interface HuTietKiemRecord {
   id: string;
   chieu: SavingsDirection;
@@ -202,6 +215,10 @@ export interface HuTietKiemRecord {
   so_luong_phan: number | null;
   so_tien: number | null;
   nguon_id: SavingsSourceId | null;
+  // Hũ (migration 0005); NULL chỉ ở dữ liệu trước 0005 (đã cập nhật = TIET_KIEM)
+  hu_id: string | null;
+  // Dòng RUT đi kèm khoản chi trả từ hũ
+  giao_dich_id: string | null;
   thanh_vien_id: MemberId;
   ngay: string;
   trang_thai: FundMoveStatus;

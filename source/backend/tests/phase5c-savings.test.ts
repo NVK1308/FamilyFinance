@@ -106,9 +106,9 @@ for (const backend of BACKENDS) {
     it('S-1: /tietkiemdau khai báo (không trừ ai, nhắc tính 2 lần, báo người kia); gửi lại update không ghi 2 lần', async () => {
       const { update, calls } = await say(VO, '/tietkiemdau 50tr');
       const mine = sentTo(calls, VO)[0];
-      assert.match(mine?.text ?? '', /^🏺 Khai báo hũ tiết kiệm 50\.000\.000đ · không trừ tiền ai · 05\/11\nLưu ý:/);
+      assert.match(mine?.text ?? '', /^🏺 Khai báo hũ Tiết kiệm 50\.000\.000đ · không trừ tiền ai · 05\/11\nLưu ý:/);
       assert.ok(button(mine, 'hk:'));
-      assert.match(sentTo(calls, CHONG)[0]?.text ?? '', /Vợ: khai báo hũ tiết kiệm 50\.000\.000đ/);
+      assert.match(sentTo(calls, CHONG)[0]?.text ?? '', /Vợ: khai báo hũ Tiết kiệm 50\.000\.000đ/);
       assert.equal(await jar(), 50_000_000);
       assert.deepEqual(await holders(), { VO: 5_000_000, CHONG: 3_000_000, QUY_CHUNG: 2_000_000, CHUA_XAC_DINH: 0 });
       await h.post(update);
@@ -121,12 +121,12 @@ for (const backend of BACKENDS) {
     it('S-2, S-3, S-5, S-6: bỏ vào / lấy ra trừ cộng đúng nguồn; bất biến; /sodu; /thang không đổi', async () => {
       await say(VO, '/tietkiemdau 10tr');
       const nop = await say(VO, 'bỏ hũ tiết kiệm 1tr');
-      assert.match(sentTo(nop.calls, VO)[0]?.text ?? '', /^🏺 Bỏ hũ tiết kiệm 1\.000\.000đ · vợ trả · 05\/11$/);
-      assert.match(sentTo(nop.calls, CHONG)[0]?.text ?? '', /Vợ: bỏ hũ tiết kiệm 1\.000\.000đ \(vợ trả, 05\/11\)/);
+      assert.match(sentTo(nop.calls, VO)[0]?.text ?? '', /^🏺 Bỏ hũ Tiết kiệm 1\.000\.000đ · vợ trả · 05\/11$/);
+      assert.match(sentTo(nop.calls, CHONG)[0]?.text ?? '', /Vợ: bỏ hũ Tiết kiệm 1\.000\.000đ \(vợ trả, 05\/11\)/);
       const fund = await say(CHONG, 'lấy quỹ chung bỏ hũ 500k');
       assert.match(sentTo(fund.calls, CHONG)[0]?.text ?? '', /500\.000đ · từ quỹ chung/);
       const rut = await say(CHONG, 'rút hũ tiết kiệm 2tr');
-      assert.match(sentTo(rut.calls, CHONG)[0]?.text ?? '', /^🏺 Lấy ra từ hũ tiết kiệm 2\.000\.000đ · chồng nhận · 05\/11$/);
+      assert.match(sentTo(rut.calls, CHONG)[0]?.text ?? '', /^🏺 Lấy ra từ hũ Tiết kiệm 2\.000\.000đ · chồng nhận · 05\/11$/);
       assert.deepEqual(await holders(), { VO: 4_000_000, CHONG: 5_000_000, QUY_CHUNG: 1_500_000, CHUA_XAC_DINH: 0 });
       assert.equal(await jar(), 9_500_000);
       await assertInvariant(env, TODAY, 'sau hũ');
@@ -157,7 +157,7 @@ for (const backend of BACKENDS) {
       await h.click(VO, cancel);
       const done = h.tg.take();
       assert.equal(answers(done)[0]?.text, 'Đã huỷ');
-      assert.match(sentTo(done, CHONG)[0]?.text ?? '', /Vợ đã huỷ: bỏ hũ tiết kiệm 1\.000\.000đ/);
+      assert.match(sentTo(done, CHONG)[0]?.text ?? '', /Vợ đã huỷ: bỏ hũ Tiết kiệm 1\.000\.000đ/);
       assert.equal(await jar(), 0);
       assert.equal((await holders())?.VO, 5_000_000);
       await h.click(VO, cancel);
@@ -166,22 +166,25 @@ for (const backend of BACKENDS) {
     });
 
     it('S-7: câu hỏi số dư hũ, số dư chung kèm hũ, /tietkiem, "lãi tiết kiệm" là Thu', async () => {
-      assert.match(sentTo((await say(VO, '/tietkiem')).calls, VO)[0]?.text ?? '', /Hũ tiết kiệm đang trống/);
+      assert.match(sentTo((await say(VO, '/tietkiem')).calls, VO)[0]?.text ?? '', /^🏺 Hũ đến 05\/11:\n• Tiết kiệm: 0đ\nTổng hũ: 0đ\n\nTạo hũ:/);
       await say(VO, '/tietkiemdau 20tr');
       h.setNow('2026-11-05T04:00:00.000Z'); // created_at khác nhau → thứ tự "gần đây" xác định
       await say(CHONG, 'bỏ hũ tiết kiệm 3tr');
       assert.equal(
         sentTo((await say(VO, 'hũ tiết kiệm còn bao nhiêu')).calls, VO)[0]?.text,
-        '🏺 Hũ tiết kiệm đến 05/11: 23.000.000đ\nChi tiết: /tietkiem',
+        '🏺 Hũ Tiết kiệm đến 05/11: 23.000.000đ\nChi tiết: /tietkiem',
       );
       assert.match(sentTo((await say(VO, 'gia đình còn bao nhiêu')).calls, VO)[0]?.text ?? '', /🏺 Hũ tiết kiệm: 23\.000\.000đ/);
       assert.match(sentTo((await say(VO, 'tháng này tiết kiệm được bao nhiêu')).calls, VO)[0]?.text ?? '', /^💰 Tiết kiệm · /);
       const detail = sentTo((await say(VO, '/tietkiem')).calls, VO)[0]?.text ?? '';
-      assert.match(detail, /^🏺 Hũ tiết kiệm đến 05\/11: 23\.000\.000đ\nGần đây:\n• 05\/11 Bỏ vào 3\.000\.000đ \(chồng\)\n• 05\/11 Khai báo 20\.000\.000đ$/);
+      assert.match(
+        detail,
+        /^🏺 Hũ đến 05\/11:\n• Tiết kiệm: 23\.000\.000đ\nTổng hũ: 23\.000\.000đ\nGần đây:\n• 05\/11 Bỏ vào 3\.000\.000đ \(Tiết kiệm, chồng\)\n• 05\/11 Khai báo 20\.000\.000đ \(Tiết kiệm\)\n/,
+      );
       assert.match(sentTo((await say(VO, 'lãi tiết kiệm 2tr')).calls, VO)[0]?.text ?? '', /✅ Thu 2\.000\.000đ · Thu khác/);
       assert.equal(
         sentTo((await say(VO, 'tháng này bỏ hũ bao nhiêu')).calls, VO)[0]?.text,
-        '🏺 Hũ tiết kiệm · tháng 11/2026 (01/11–30/11): bỏ vào 3.000.000đ (1 lần) · lấy ra 0đ (0 lần)\nHũ hiện có (đến 05/11): 23.000.000đ',
+        '🏺 Các hũ · tháng 11/2026 (01/11–30/11): bỏ vào 3.000.000đ (1 lần) · lấy ra 0đ (0 lần)\nHiện có (đến 05/11): 23.000.000đ',
       );
     });
 

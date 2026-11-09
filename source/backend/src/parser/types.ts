@@ -15,6 +15,8 @@ import type {
 export interface ParseOptions {
   senderId: MemberId;
   referenceDate?: string;
+  // Tên hũ đang có (ASCII, chữ thường — hu.ten_khong_dau). "quỹ X" chỉ là hũ khi X khớp một tên ở đây.
+  jarNames?: readonly string[];
 }
 
 export interface ParseContext {
@@ -41,6 +43,8 @@ export interface ParsedTransactionResult {
   requires_confirmation: ConfirmationType[];
   cashflow_impact: number;
   mo_ta: string;
+  // Chi trả từ hũ ("… lấy từ quỹ y tế"): chữ sau "hũ / quỹ"; '' = hũ mặc định; null = không trả từ hũ
+  ten_hu_nguon: string | null;
 }
 
 export interface ParsedTransferResult {
@@ -76,6 +80,8 @@ export interface ParsedSavingsResult {
   thanh_vien_id: MemberId;
   // Nguồn / đích tiền mặt; null khi khai báo
   nguon_id: SavingsSourceId | null;
+  // Chữ sau "hũ / quỹ" (ASCII) — service khớp tên hũ; null = hũ mặc định
+  ten_hu: string | null;
   so_tien: number | null;
   so_tien_mo_ho: boolean;
   ngay: string;

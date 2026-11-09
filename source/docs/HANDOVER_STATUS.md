@@ -95,7 +95,8 @@
 - Đối tượng mới `CAC_CON` (Q8): seed 0003 (SQLite + PGlite), Neon chạy `temp/neon/04_them_cac_con.sql` **trước** khi deploy; `neon-members check` + deploy bước 5 kiểm có CAC_CON. Test Phase 4 A1 + contract `TC_11_V4_CAC_CON` sửa có chủ đích.
 - Test: [phase5b-query.test.ts](file:///F:/FamilyFinance/source/backend/tests/phase5b-query.test.ts).
 
-### ✅ Phase 5c-1 — Hũ tiết kiệm, phần tiền (CODE XONG, 252/252 test pass trên SQLite + PGlite, typecheck + verify-schema sạch; CHƯA DEPLOY, CHƯA COMMIT)
+### ✅ Phase 5c-1 — Hũ tiết kiệm, phần tiền (một hũ: commit `33be996`; **nhiều hũ v3: CODE XONG 09/11, 263/263 test, typecheck + verify-schema sạch, CHƯA COMMIT, CHƯA DEPLOY**)
+- v3 (plan mục 8–9, review_2): bảng `hu` + `hu_tiet_kiem.hu_id/giao_dich_id` (migration 0005, Neon `temp/neon/06_nhieu_hu.sql`); `/taohu <tên> [mục tiêu]`, `/tietkiem` từng hũ + % mục tiêu, `/tietkiemdau <tiền> [hũ]`; "bỏ hũ mua nhà 10tr", "rút quỹ y tế 2tr"; **chi trả từ hũ** ("khám bệnh 2tr lấy từ quỹ y tế" = giao dịch Chi + dòng lấy ra đi kèm, huỷ cả cặp, không đổi sang Thu, cảnh báo hũ âm, báo người kia); câu hỏi theo hũ; "tỷ". Chi tiết DATABASE_DESIGN 3.1d, PARSER_RULES 4a.
 - Plan v2 + review vòng 1: `E:\QuangIch\AIWorkspace\sessions\FamilyFinance\2026-11-06_hu-tiet-kiem\`. Người dùng chốt: hũ là tài sản chung, khai báo + đắp dần như quỹ chung, giá trị lúc giao dịch; vàng (5c-2) định giá theo giá mua/bán gần nhất, không tự ghi lãi/lỗ.
 - Bảng `hu_tiet_kiem` (migration 0004, Postgres + SQLite desktop, Neon `temp/neon/05_hu_tiet_kiem.sql`) — chi tiết [DATABASE_DESIGN.md](DATABASE_DESIGN.md) 3.1c. Đủ cột cho vàng (số phân) để 5c-2 không cần migration.
 - Parser `savings-detector.ts` (trước quỹ chung) → `SAVINGS_MOVE`; `SavingsService` (ghi ngay, huỷ `hk:`, báo người kia, cảnh báo vượt số dư dùng chung `BalanceService.isOverBalance`); số dư tiền mặt 2 cách đều tính dòng hũ (cùng bộ lọc); `/tietkiem`, `/tietkiemdau <tiền>` (khoá `tg:<update_id>`); `/sodu` + câu hỏi số dư chung có hũ + tổng tài sản; câu hỏi số dư hũ / bỏ vào trong kỳ.
@@ -106,6 +107,6 @@
 
 ## 3. Công Việc Tiếp Theo
 
-- **Deploy 5b + 5c-1**: Neon chạy `temp/neon/04_them_cac_con.sql` (nếu chưa) rồi `temp/neon/05_hu_tiet_kiem.sql`, sau đó `deploy.ps1 -From 3 -To 4 -Yes`. Thử câu hỏi thật, câu sai → bổ sung luật (xem tin `CAU_HOI_CHUA_HIEU`).
+- **Deploy 5b + 5c-1 (nhiều hũ)**: Neon chạy lần lượt `temp/neon/04_them_cac_con.sql` → `05_hu_tiet_kiem.sql` → `06_nhieu_hu.sql` (file nào đã chạy thì bỏ qua; chạy lại cũng không sao), sau đó `deploy.ps1 -From 3 -To 4 -Yes`. Thử câu hỏi thật, câu sai → bổ sung luật (xem tin `CAU_HOI_CHUA_HIEU`).
 - **Phase 5c-2**: vàng (mua / bán / khai báo theo chỉ – phân – lượng, đơn giá "/chỉ", định giá theo giá gần nhất).
 - Dồn lại: version seed (Phase 7), khoá kỳ đã chốt (Phase 8), test kết nối Neon WS thật (Phase 10).
