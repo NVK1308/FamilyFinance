@@ -56,7 +56,8 @@ Xét theo thứ tự:
 | So sánh | so sánh | Thu / Chi / Tiết kiệm 2 kỳ + chênh (theo chỉ số cần tính). "so sánh … vợ và chồng" → theo người. Kỳ: mục 3b |
 | Ai chi nhiều nhất | `ai` (trừ "chưa rõ ai giữ"), `người nào` | Tổng theo người thực hiện, giảm dần |
 | Khoản lớn nhất | lớn nhất, to nhất, nhiều nhất, khoản (chi/thu) nào | Top 5 giao dịch theo số tiền (Chi mặc định, Thu nếu hỏi thu) |
-| Liệt kê | liệt kê, lịch sử, danh sách, những/các khoản, chi tiết | 10 giao dịch mới nhất + tổng; hỏi cả thu và chi thì ghi thu, chi riêng (không cộng lẫn) |
+| Liệt kê | liệt kê, lịch sử, danh sách, những/các khoản | 10 giao dịch mới nhất + tổng; hỏi cả thu và chi thì ghi thu, chi riêng (không cộng lẫn); còn nữa → câu gợi ý "liệt kê chi tiết … từ dd/mm đến dd/mm" (giữ bộ lọc) |
+| Liệt kê chi tiết | chi tiết, tất cả, đầy đủ, toàn bộ (không kèm "tổng / bao nhiêu / mấy" — có thì vẫn là tổng) | **Mọi khoản** trong kỳ, nhóm 👤 người → Thu/Chi → danh mục (lớn → nhỏ) → từng ngày (cũ → mới). Kỳ ≤ 31 ngày giữ nguyên; dài hơn → **31 ngày cuối kỳ** (trong kỳ đã chọn, kỳ chưa hết thì tới hôm nay) + câu gợi ý hỏi phần đầu kỳ (có năm nếu khác năm nay). Tối đa 300 khoản / lần (vượt → báo ngày bắt đầu, tổng nhóm chỉ tính phần hiện). Tin > 3.900 ký tự tự tách nhiều tin |
 | Tổng | Còn lại | Thu / Chi / Tiết kiệm / Tổng quan |
 
 Mỗi dòng giao dịch: `ngày số tiền danh mục (người thực hiện)`; khoản thu có dấu `+`; danh mục Khác / không danh mục thì kèm 30 ký tự đầu của tin gốc.
@@ -92,6 +93,10 @@ Mỗi dòng giao dịch: `ngày số tiền danh mục (người thực hiện)`
 **Yêu cầu huỷ / xoá / sửa:** câu có `huỷ`, `xoá`, `hoàn tác`, `sửa lại/tin/khoản` (so trên chuỗi có dấu; "bị huỷ / đã huỷ" là trạng thái, không tính; "tiền sửa xe" không tính) → bot không thống kê, không ghi, không lưu tin, chỉ trả hướng dẫn: bấm "Huỷ" dưới tin ✅, chuyển đang chờ dùng /cho. Câu **bắt đầu** bằng huỷ/xoá có kèm tiền ("hủy khoản tiền ăn 50k") cũng không ghi.
 
 **Không đoán bừa — câu không hiểu:** câu tổng thu/chi chỉ được trả lời khi có ít nhất 1 dấu hiệu: hỏi số tiền (`bao nhiêu`, `mấy`, `hết`, `tổng`, `thống kê`, `tình hình`, `thu chi`, `tiết kiệm`), hoặc nêu kỳ, danh mục, đối tượng, quỹ chung. Chỉ có trợ từ hỏi + động từ ("vợ chi chưa", "nhận được chưa") → không hiểu. "ai" chỉ hiểu khi đi cùng chi/thu/nhiều nhất. Bot gợi ý câu mẫu và lưu tin vào `tin_nhan_goc` với trạng thái `DA_BO_QUA`, `chi_tiet_loi = CAU_HOI_CHUA_HIEU` (Q7) để bổ sung luật sau. Câu hỏi hiểu được thì không lưu.
+
+### 3c. Lệnh tắt tổng hợp `/tuan`, `/thang`
+- `/tuan` (tuần này, thứ 2 → CN), `/tuan trước`, `/thang` (tháng này), `/thang trước`, `/thang 10`, `/thang 10/2025`; thêm `vợ` / `chồng` để lọc người thực hiện. Chữ lạ → nhắc cú pháp.
+- Một tin: Thu / Chi (số khoản) / Chênh lệch, 5 danh mục chi lớn nhất, chi theo người (khi không lọc người), chi từ quỹ chung, câu gợi ý "liệt kê chi tiết …".
 
 ## 4. Bộ lọc
 

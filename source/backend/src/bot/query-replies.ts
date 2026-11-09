@@ -1,7 +1,8 @@
 import type { GroupTotal, TxRow } from '../db/repositories/index.ts';
 import { ALL_TIME_FROM, type Period } from '../query/period-parser.ts';
 import type { QuerySpec } from '../query/types.ts';
-import { MAX_GROUPS, type QueryAnswer, type Sum } from '../services/query-service.ts';
+import { FULL_LIST_DAYS, FULL_LIST_LIMIT, MAX_GROUPS, type QueryAnswer, type Sum } from '../services/query-service.ts';
+import { addDaysToIsoDate } from '../parser/date-parser.ts';
 import { balanceSummaryLines, formatDay, formatMoney, holderName, jarListLines, memberName } from './replies.ts';
 
 const TYPE_NAME: Record<string, string> = { LAI_VAY: 'Lãi vay', PHI: 'Phí' };
@@ -143,20 +144,39 @@ function shorten(text: string | null, max = 30): string {
   return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 }
 
-// "05/11 1.000.000đ Học phí (Vợ)"; danh mục Khác thì kèm nội dung tin để biết là khoản gì
+// Nhãn danh mục của 1 giao dịch (khoản không danh mục: theo loại)
+function rowLabel(r: TxRow): string {
+  return r.danh_muc ?? TYPE_NAME[r.loai] ?? 'Chưa phân loại';
+}
+
+// Danh mục Khác / không danh mục → kèm nội dung tin để biết là khoản gì
+function rowNote(r: TxRow): string {
+  return !r.ma_danh_muc || OTHER_CATEGORIES.has(r.ma_danh_muc) ? ` — ${shorten(r.mo_ta)}` : '';
+}
+
+// "05/11 1.000.000đ Học phí (Vợ)"
 function itemLine(r: TxRow, index?: number): string {
-  const label = r.danh_muc ?? TYPE_NAME[r.loai] ?? 'Chưa phân loại';
-  const note = !r.ma_danh_muc || OTHER_CATEGORIES.has(r.ma_danh_muc) ? ` — ${shorten(r.mo_ta)}` : '';
   const sign = r.loai === 'THU' ? '+' : '';
   const prefix = index === undefined ? '•' : `${index}.`;
-  return `${prefix} ${formatDay(r.ngay)} ${sign}${formatMoney(r.so_tien)} ${label} (${memberName(r.nguoi_thuc_hien_id)})${note}`;
+  return `${prefix} ${formatDay(r.ngay)} ${sign}${formatMoney(r.so_tien)} ${rowLabel(r)} (${memberName(r.nguoi_thuc_hien_id)})${rowNote(r)}`;
 }
 
 function verbOf(spec: QuerySpec): string {
   return spec.measure === 'THU' ? 'thu' : spec.measure === 'CHI' ? 'chi' : 'thu/chi';
 }
 
-function itemLines(a: Extract<QueryAnswer, { kind: 'LON_NHAT' | 'LIET_KE' }>): string[] {
+// dd/mm, thêm /yyyy khi khác năm hiện tại của kỳ hỏi (để câu gợi ý hỏi lại đúng năm)
+function dayForHint(date: string, refYear: string): string {
+  return date.slice(0, 4) === refYear ? formatDay(date) : `${formatDay(date)}/${date.slice(0, 4)}`;
+}
+
+// Câu gợi ý hỏi tiếp, giữ đủ bộ lọc: "liệt kê chi tiết vợ chi tiền ăn từ …"
+function listHint(spec: QuerySpec, when: string): string {
+  const s = subject(spec, verbOf(spec));
+  return `liệt kê chi tiết ${s.charAt(0).toLowerCase()}${s.slice(1)} ${when}`;
+}
+
+function itemLines(a: Extract<QueryAnswer, { kind: 'LON_NHAT' | 'LIET_KE' }>, today: string): string[] {
   const { spec } = a;
   const when = periodText(spec.period);
   if (a.kind === 'LON_NHAT') {
@@ -174,9 +194,124 @@ function itemLines(a: Extract<QueryAnswer, { kind: 'LON_NHAT' | 'LIET_KE' }>): s
         : spec.measure === 'CHI'
           ? `${formatMoney(a.chi)} · ${a.count} khoản`
           : `thu ${formatMoney(a.thu)}, chi ${formatMoney(a.chi)} · ${a.count} khoản`;
-  const head = `📋 ${subject(spec, verbOf(spec))} · ${when}: ${total}`;
-  const more = a.count > a.rows.length ? [`… còn ${a.count - a.rows.length} khoản cũ hơn`] : [];
-  return [head, ...a.rows.map((r) => itemLine(r)), ...more, ...beneficiaryNote(spec)];
+  const head = `📋 ${subject(spec, verbOf(spec))} · ${a.shown?.capped ? periodText(a.shown.period) : when}: ${total}`;
+  const top: string[] = [];
+  const notes: string[] = [];
+  const refYear = today.slice(0, 4);
+  if (a.shown && a.count > a.rows.length) {
+    // Chạm giới hạn 300: nói rõ danh sách bắt đầu từ ngày nào; tổng nhóm bên dưới chỉ gồm các khoản hiện ra
+    const oldest = a.rows.reduce((m, r) => (r.ngay < m ? r.ngay : m), a.rows[0]?.ngay ?? spec.period.from);
+    top.push(`⚠️ Chỉ hiện ${a.rows.length} khoản mới nhất (từ ${formatDay(oldest)}); số theo nhóm bên dưới chỉ tính các khoản này.`);
+  }
+  if (a.shown?.capped) {
+    // Chỉ cắt trong kỳ đã chọn: hiện 31 ngày cuối kỳ, chỉ rõ phần đầu kỳ chưa hiện
+    const restTo = addDaysToIsoDate(a.shown.period.from, -1);
+    const rest = `từ ${dayForHint(spec.period.from, refYear)} đến ${dayForHint(restTo, refYear)}`;
+    notes.push(`(Kỳ dài hơn ${FULL_LIST_DAYS} ngày: chỉ hiện ${FULL_LIST_DAYS} ngày cuối kỳ. Phần còn lại hỏi: "${listHint(spec, rest)}")`);
+  }
+  if (!a.shown && a.count > a.rows.length) {
+    const range = `từ ${dayForHint(spec.period.from, refYear)} đến ${dayForHint(spec.period.to, refYear)}`;
+    notes.push(`… còn ${a.count - a.rows.length} khoản cũ hơn. Xem đủ: "${listHint(spec, range)}"`);
+  }
+  const body = a.shown ? groupedItemLines(a.rows) : a.rows.map((r) => itemLine(r));
+  return [head, ...top, ...body, ...notes, ...beneficiaryNote(spec)];
+}
+
+// Gom theo khoá, giữ thứ tự xuất hiện
+function groupBy<K>(list: readonly TxRow[], key: (r: TxRow) => K): Map<K, TxRow[]> {
+  const map = new Map<K, TxRow[]>();
+  for (const r of list) {
+    const k = key(r);
+    const bucket = map.get(k);
+    if (bucket) bucket.push(r);
+    else map.set(k, [r]);
+  }
+  return map;
+}
+
+function sumOf(list: readonly TxRow[]): number {
+  return list.reduce((s, r) => s + r.so_tien, 0);
+}
+
+// Liệt kê chi tiết: người → Thu/Chi → danh mục (lớn → nhỏ) → từng ngày (cũ → mới, cùng ngày theo thứ tự ghi)
+//   👤 Vợ
+//     Chi: 2.200.000đ
+//       Thức ăn: 2.000.000đ
+//         • 11/01: 2.000.000đ
+function groupedItemLines(rows: readonly TxRow[]): string[] {
+  // rows đến theo mới → cũ (ngày, rồi thời điểm ghi) → đảo lại rồi sắp ổn định theo ngày
+  const ordered = [...rows].reverse().sort((x, y) => x.ngay.localeCompare(y.ngay));
+  const personOrder = (p: string) => (p === 'VO' ? 0 : p === 'CHONG' ? 1 : 2);
+  const lines: string[] = [];
+  const people = [...groupBy(ordered, (r) => r.nguoi_thuc_hien_id)].sort(([a], [b]) => personOrder(a) - personOrder(b) || a.localeCompare(b));
+  for (const [person, personRows] of people) {
+    lines.push(`👤 ${memberName(person)}`);
+    const sides = [...groupBy(personRows, (r) => (r.loai === 'THU' ? 'Thu' : 'Chi'))].sort(([a]) => (a === 'Thu' ? -1 : 1));
+    for (const [side, sideRows] of sides) {
+      lines.push(`  ${side}: ${formatMoney(sumOf(sideRows))}`);
+      const categories = [...groupBy(sideRows, rowLabel)]
+        .map(([name, list]) => ({ name, list, total: sumOf(list) }))
+        .sort((x, y) => y.total - x.total || x.name.localeCompare(y.name));
+      for (const c of categories) {
+        lines.push(`    ${c.name}: ${formatMoney(c.total)}`);
+        for (const r of c.list) {
+          lines.push(`      • ${formatDay(r.ngay)}: ${formatMoney(r.so_tien)}${rowNote(r)}`);
+        }
+      }
+    }
+  }
+  return lines;
+}
+
+// ---------- Lệnh tắt /tuan, /thang ----------
+
+const SUMMARY_TOP = 5;
+
+// Một tin tổng hợp kỳ: Thu / Chi (số khoản) / Chênh lệch + danh mục chi lớn + theo người + quỹ chung.
+// Khác totalLines (câu hỏi tự do) ở chỗ luôn hiện số khoản và thêm 2 dòng tổng hợp.
+export function periodSummaryText(spec: QuerySpec, total: QueryAnswer, byCategory: QueryAnswer, byPerson: QueryAnswer | null, example: string): string {
+  if (total.kind !== 'TONG' || byCategory.kind !== 'THEO_DANH_MUC' || (byPerson && byPerson.kind !== 'AI_NHIEU_NHAT')) {
+    throw new Error('periodSummaryText: sai loại kết quả');
+  }
+  const who = spec.performer ? ` · ${memberName(spec.performer)}` : '';
+  const count = (s: Sum | null) => `${formatMoney(s?.total ?? 0)} · ${s?.count ?? 0} khoản`;
+  const lines = [
+    `📊 ${capitalize(periodText(spec.period))}${who}:`,
+    `• Thu: ${count(total.thu)}`,
+    `• Chi: ${count(total.chi)}`,
+    `• Chênh lệch: ${formatMoney((total.thu?.total ?? 0) - (total.chi?.total ?? 0))}`,
+  ];
+  const top = byCategory.nhom.slice(0, SUMMARY_TOP);
+  if (top.length > 0) {
+    lines.push(`Chi nhiều nhất: ${top.map((g) => `${groupLabel(g, 'Chưa phân loại')} ${formatMoney(g.total)}`).join(' · ')}`);
+  }
+  if (byPerson?.kind === 'AI_NHIEU_NHAT' && byPerson.nhom.length > 0) {
+    lines.push(`Theo người: ${byPerson.nhom.map((g) => `${memberName(g.key ?? '?')} ${formatMoney(g.total)}`).join(' · ')}`);
+  }
+  if (total.chiTuQuyChung) {
+    lines.push(`Trong đó chi từ quỹ chung: ${formatMoney(total.chiTuQuyChung)}`);
+  }
+  lines.push(`Xem từng khoản: "${example}"`);
+  return lines.join('\n');
+}
+
+// Telegram giới hạn 4.096 ký tự / tin → tách theo dòng
+export const TELEGRAM_TEXT_MAX = 3_900;
+
+export function splitTelegramText(text: string, max = TELEGRAM_TEXT_MAX): string[] {
+  const chunks: string[] = [];
+  let current = '';
+  for (const line of text.split('\n')) {
+    const piece = line.length > max ? `${line.slice(0, max - 1)}…` : line;
+    if (current && current.length + 1 + piece.length > max) {
+      chunks.push(current);
+      current = piece;
+    } else {
+      current = current ? `${current}\n${piece}` : piece;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
 }
 
 function whoLines(a: Extract<QueryAnswer, { kind: 'AI_NHIEU_NHAT' }>): string[] {
@@ -228,7 +363,8 @@ function transferLines(a: Extract<QueryAnswer, { kind: 'CHUYEN_TIEN' }>): string
   return [head, ...rows, ...more];
 }
 
-export function queryAnswerText(a: QueryAnswer, coSoTien: boolean): string {
+// today: ngày VN của tin (năm trong câu gợi ý hỏi tiếp)
+export function queryAnswerText(a: QueryAnswer, coSoTien: boolean, today: string = a.spec.period.to): string {
   let lines: string[];
   switch (a.kind) {
     case 'TONG':
@@ -249,7 +385,7 @@ export function queryAnswerText(a: QueryAnswer, coSoTien: boolean): string {
       break;
     case 'LON_NHAT':
     case 'LIET_KE':
-      lines = itemLines(a);
+      lines = itemLines(a, today);
       break;
     case 'SO_SANH':
       lines = compareLines(a);

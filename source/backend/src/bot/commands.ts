@@ -8,9 +8,13 @@ import {
 import type { ThanhVienRecord } from '../db/types.ts';
 import { extractAmountVnd } from '../parser/amount-parser.ts';
 import { createParseContext } from '../parser/normalizer.ts';
-import { DomainError, toVnDate, vnMonthRange } from '../services/common.ts';
+import { DomainError, toVnDate } from '../services/common.ts';
 import type { BotAction } from '../telegram/types.ts';
+import { removeVietnameseDiacritics } from '../parser/normalizer.ts';
+import { parsePeriod } from '../query/period-parser.ts';
+import type { QuerySpec } from '../query/types.ts';
 import type { BotContext } from './handler.ts';
+import { periodSummaryText } from './query-replies.ts';
 import { memberChatId, otherMember } from './members.ts';
 import {
   HELP_TEXT,
@@ -58,7 +62,8 @@ export async function runCommand(
     case 'sodu':
       return reply(await balanceText(ctx));
     case 'thang':
-      return reply(await monthText(ctx));
+    case 'tuan':
+      return reply(await periodSummary(ctx, name, args));
     case 'cho':
       return pendingTransfers(ctx, member.id as MemberId, chatId);
     case 'ghichu':
@@ -108,7 +113,17 @@ async function savingsJarText(ctx: BotContext): Promise<string> {
 }
 
 // "/taohu Mua nhà 2 tỷ" → tên + mục tiêu (1–2 chữ cuối là số tiền)
-function splitNameAndAmount(args: string[], memberId: MemberId): { name: string; amount: number | null } {
+// Người dùng hay gõ nguyên cú pháp mẫu ("/taohu <mua nhà> 2 tỷ đồng") → bỏ dấu <>[] và chữ "đồng" ở cuối
+const SYNTAX_BRACKETS = /[<>[\]]/g;
+const CURRENCY_WORD = /^(?:đồng|dong|đ|d|vnd|vnđ)$/i;
+
+function cleanArgs(args: string[]): string[] {
+  const cleaned = args.map((a) => a.replace(SYNTAX_BRACKETS, '')).filter(Boolean);
+  return cleaned.length > 1 && CURRENCY_WORD.test(cleaned[cleaned.length - 1]!) ? cleaned.slice(0, -1) : cleaned;
+}
+
+function splitNameAndAmount(rawArgs: string[], memberId: MemberId): { name: string; amount: number | null } {
+  const args = cleanArgs(rawArgs);
   for (const n of [2, 1]) {
     if (args.length > n) {
       const amount = parseMoneyArg(args.slice(-n).join(' '), memberId);
@@ -149,7 +164,8 @@ async function declareSavings(
   updateId: number | undefined,
 ): Promise<BotAction[]> {
   const memberId = member.id as MemberId;
-  // /tietkiemdau 50tr [tên hũ] — số tiền là 1–2 chữ đầu ("2 tỷ", "50 triệu")
+  // /tietkiemdau 50tr [tên hũ] — số tiền là 1–2 chữ đầu ("2 tỷ", "50 triệu"); bỏ dấu <>[] nếu gõ theo cú pháp mẫu
+  args = args.map((a) => a.replace(SYNTAX_BRACKETS, '')).filter(Boolean);
   let amount: number | null = null;
   let nameFrom = 1;
   for (const n of [2, 1]) {
@@ -183,16 +199,37 @@ async function declareSavings(
   return actions;
 }
 
-async function monthText(ctx: BotContext): Promise<string> {
-  const { from, to } = vnMonthRange(ctx.now());
-  const t = await ctx.balances.getPeriodTotals(from, to);
-  return [
-    `📅 Tháng ${to.slice(5, 7)}/${to.slice(0, 4)}:`,
-    `• Thu: ${formatMoney(t.tongThu)}`,
-    `• Chi: ${formatMoney(t.tongChi)}`,
-    `• Chênh lệch: ${formatMoney(t.chenhLech)}`,
-  ].join('\n');
+// /tuan, /thang [trước] [vợ|chồng]: thu, chi, chênh lệch, danh mục chi lớn, theo người — dùng lại QueryService
+async function periodSummary(ctx: BotContext, unit: string, args: string[]): Promise<string> {
+  const today = toVnDate(ctx.now());
+  const isWeek = unit === 'tuan';
+  let previous = false;
+  let performer: MemberId | null = null;
+  let monthArg: string | null = null;
+  // /thang 10, /thang 10/2026; chữ lạ → nhắc cú pháp (không lặng lẽ trả kỳ hiện tại)
+  for (const word of args.map((a) => removeVietnameseDiacritics(a.toLowerCase()))) {
+    if (word === 'truoc' || word === 'qua') previous = true;
+    else if ((word === 'vo' || word === 'chong') && performer === null) performer = word === 'vo' ? 'VO' : 'CHONG';
+    else if (!isWeek && monthArg === null && /^\d{1,2}(?:\/\d{4})?$/.test(word)) monthArg = word;
+    else return `Chưa hiểu "${word}".\n${SUMMARY_SYNTAX}`;
+  }
+  const phrase = monthArg ? `thang ${monthArg}` : `${isWeek ? 'tuan' : 'thang'} ${previous ? 'truoc' : 'nay'}`;
+  const period = parsePeriod(phrase, today).period;
+  if (!period) {
+    return `Tháng không hợp lệ.\n${SUMMARY_SYNTAX}`;
+  }
+  const base: QuerySpec = { kind: 'TONG', measure: 'TONG_QUAN', period, performer, beneficiaries: null, categories: null, holder: null };
+  const [total, byCategory, byPerson] = await Promise.all([
+    ctx.queries.run(base, today),
+    ctx.queries.run({ ...base, kind: 'THEO_DANH_MUC', measure: 'CHI' }, today),
+    performer ? null : ctx.queries.run({ ...base, kind: 'AI_NHIEU_NHAT', measure: 'CHI' }, today),
+  ]);
+  const when = monthArg ? `tháng ${monthArg}` : `${isWeek ? 'tuần' : 'tháng'} ${previous ? 'trước' : 'này'}`;
+  const example = `liệt kê chi tiết ${performer ? `${performer === 'VO' ? 'vợ' : 'chồng'} ` : ''}chi ${when}`;
+  return periodSummaryText(base, total, byCategory, byPerson, example);
 }
+
+const SUMMARY_SYNTAX = 'Cú pháp: /tuan, /tuan trước, /thang, /thang trước, /thang 10, /thang 10/2025 — thêm "vợ" / "chồng" để xem riêng 1 người.';
 
 // Mỗi khoản chuyển đang chờ 1 tin kèm nút (người nhận: Đã nhận/Chưa nhận; người chuyển: Huỷ)
 async function pendingTransfers(ctx: BotContext, memberId: MemberId, chatId: number): Promise<BotAction[]> {

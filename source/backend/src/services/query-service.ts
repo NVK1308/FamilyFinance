@@ -18,6 +18,7 @@ import {
   type TxQueryFilter,
 } from '../db/repositories/index.ts';
 import type { DatabaseAdapter, HuRecord } from '../db/types.ts';
+import { addDaysToIsoDate } from '../parser/date-parser.ts';
 import type { Period } from '../query/period-parser.ts';
 import type { QuerySpec } from '../query/types.ts';
 import { BalanceService, type HolderBalancesResult } from './balance-service.ts';
@@ -32,6 +33,25 @@ export const TOP_CATEGORIES = 3;
 export const MAX_GROUPS = 8;
 export const TOP_ITEMS = 5;
 export const LIST_LIMIT = 10;
+// Liệt kê đủ ("chi tiết / tất cả"): tối đa 31 ngày (trọn 1 tháng), 300 khoản / lần (tin nhắn, không phải báo cáo)
+export const FULL_LIST_DAYS = 31;
+export const FULL_LIST_LIMIT = 300;
+
+function daysBetween(from: string, to: string): number {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
+}
+
+// Kỳ liệt kê đủ: kỳ ≤ 31 ngày → giữ nguyên (kể cả khoản ghi ngày tương lai trong kỳ);
+// dài hơn → 31 ngày cuối kỳ, tính tới hôm nay nếu kỳ chưa hết (luôn nằm trong kỳ đã chọn)
+function fullListPeriod(p: Period, today: string): { period: Period; capped: boolean } {
+  if (daysBetween(p.from, p.to) <= FULL_LIST_DAYS) {
+    return { period: p, capped: false };
+  }
+  const to = p.to > today && p.from <= today ? today : p.to;
+  const from = addDaysToIsoDate(to, -(FULL_LIST_DAYS - 1));
+  const dm = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
+  return { period: { from, to, label: `${dm(from)}–${dm(to)}`, explicit: true }, capped: true };
+}
 
 export interface Sum {
   total: number;
@@ -65,7 +85,16 @@ export type QueryAnswer =
   | { kind: 'AI_NHIEU_NHAT'; spec: QuerySpec; tong: Sum; nhom: GroupTotal[] }
   | { kind: 'LON_NHAT'; spec: QuerySpec; rows: TxRow[] }
   // Liệt kê: thu và chi tách riêng, không cộng lẫn
-  | { kind: 'LIET_KE'; spec: QuerySpec; thu: number; chi: number; count: number; rows: TxRow[] }
+  | {
+      kind: 'LIET_KE';
+      spec: QuerySpec;
+      thu: number;
+      chi: number;
+      count: number;
+      rows: TxRow[];
+      // Liệt kê đủ: khoảng ngày thật sự hiện; capped = kỳ hỏi dài hơn 30 ngày nên đã cắt
+      shown: { period: Period; capped: boolean } | null;
+    }
   | { kind: 'SO_SANH'; spec: QuerySpec; ky: [PeriodTotals, PeriodTotals] }
   // daNhan: tổng khoản đã nhận khi hỏi nhiều trạng thái (khoản huỷ / chờ / hết hạn không tính là đã chuyển)
   | { kind: 'CHUYEN_TIEN'; spec: QuerySpec; tong: Sum; daNhan: number | null; rows: TransferRow[] }
@@ -134,9 +163,13 @@ export class QueryService {
       case 'LON_NHAT':
         return { kind: 'LON_NHAT', spec, rows: await listTransactions(this.db, this.filter(spec, this.types(spec)), 'amount', TOP_ITEMS) };
       case 'LIET_KE': {
-        const f = this.filter(spec, this.types(spec));
-        const [sums, rows] = await Promise.all([sumIncomeExpense(this.db, f), listTransactions(this.db, f, 'date', LIST_LIMIT)]);
-        return { kind: 'LIET_KE', spec, ...sums, rows };
+        const shown = spec.fullList ? fullListPeriod(spec.period, today) : null;
+        const f = this.filter(shown ? { ...spec, period: shown.period } : spec, this.types(spec));
+        const [sums, rows] = await Promise.all([
+          sumIncomeExpense(this.db, f),
+          listTransactions(this.db, f, 'date', shown ? FULL_LIST_LIMIT : LIST_LIMIT),
+        ]);
+        return { kind: 'LIET_KE', spec, ...sums, rows, shown };
       }
       case 'SO_SANH': {
         const periods = [spec.period, spec.comparePeriod ?? spec.period];

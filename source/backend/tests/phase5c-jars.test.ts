@@ -121,6 +121,17 @@ for (const backend of BACKENDS) {
       assert.match(list, /^🏺 Hũ đến 05\/11:\n• Tiết kiệm: 0đ\n• Mua nhà: 15\.000\.000đ \/ 20\.000\.000đ \(75%\)\n• Y tế: 0đ\n• Du lịch: 2\.000\.000\.000đ \/ 2\.000\.000\.000đ \(100%\)\nTổng hũ: 2\.015\.000\.000đ/);
     });
 
+    it('/taohu gõ nguyên cú pháp mẫu "<mua nhà> 2 tỷ đồng" vẫn hiểu', async () => {
+      assert.match(await reply(VO, '/taohu <mua nhà> 2 tỷ đồng'), /^🏺 Đã tạo hũ mua nhà · mục tiêu 2\.000\.000\.000đ\./);
+      assert.match(await reply(VO, '/tietkiemdau <50tr> <mua nhà>'), /^🏺 Khai báo hũ mua nhà 50\.000\.000đ/);
+    });
+
+    it('Neon chưa có bảng hu (chưa chạy 06): tin thu/chi thường vẫn ghi được', async () => {
+      h.db.fail = (sql) => (/\bFROM hu\b/.test(sql) ? new Error('relation "hu" does not exist') : null);
+      assert.match(await reply(VO, 'tiền ăn 50k'), /^✅ Chi 50\.000đ · Thức ăn/);
+      h.db.fail = null;
+    });
+
     it('bỏ / rút theo tên; "quỹ <tên>"; tên chưa có → nhắc; "quỹ lớp" vẫn là chi; bất biến', async () => {
       await say(VO, '/taohu Mua nhà');
       await say(VO, '/taohu Y tế');

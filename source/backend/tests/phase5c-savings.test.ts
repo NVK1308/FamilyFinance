@@ -140,7 +140,7 @@ for (const backend of BACKENDS) {
       // Tổng tài sản = 10tr tiền mặt ban đầu + 10tr khai báo (bỏ vào / lấy ra chỉ đổi chỗ tiền)
       assert.match(sodu, /Tiền mặt: -39\.500\.000đ\n🏺 Hũ tiết kiệm: 59\.500\.000đ\nTổng tài sản \(ước tính\): 20\.000\.000đ$/);
       const thang = sentTo((await say(VO, '/thang')).calls, VO)[0]?.text ?? '';
-      assert.match(thang, /• Thu: 0đ\n• Chi: 0đ/);
+      assert.match(thang, /• Thu: 0đ · 0 khoản\n• Chi: 0đ · 0 khoản/);
     });
 
     it('S-2b, S-10: chủ ngữ khác người gửi → không ghi; thiếu tiền → nhắc', async () => {

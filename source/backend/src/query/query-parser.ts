@@ -40,6 +40,7 @@ const PENDING_WORD = /\b(?:chua\s+xac\s+nhan|cho\s+xac\s+nhan|dang\s+cho|chua\s+
 // Kỳ thứ 2 tương đối ("tháng 10 với tháng trước") → kỳ liền trước của kỳ thứ nhất
 const RELATIVE_PERIOD = /\b(?:truoc|qua|ngoai)\b/i;
 const DETAIL = /\bchi\s+tiet\b/gi;
+const FULL_LIST = /\b(?:chi\s+tiet|tat\s+ca|day\s+du|toan\s+bo)\b/i;
 
 function isTransferQuestion(normalized: string, ascii: string, rest: string): boolean {
   if (FUND_WORD.test(rest)) return false;
@@ -312,8 +313,12 @@ export function parseQuery(rawText: string, today: string, jarNames: readonly st
   if (LARGEST.test(rest)) {
     return spec('LON_NHAT', measure === 'THU' ? 'THU' : 'CHI', filters);
   }
-  if (LIST.test(rest)) {
-    return spec('LIET_KE', measure === 'CHENH_LECH' ? 'TONG_QUAN' : measure, filters);
+  // "chi tiết / tất cả / đầy đủ / toàn bộ" → liệt kê đủ (tối đa 31 ngày). Hỏi số tiền
+  // ("tổng tất cả", "chi tất cả bao nhiêu", "mấy") vẫn là tổng.
+  const asksNumber = /\btong\b/i.test(rest) || ASKS_AMOUNT.test(rest) || /(?:^|\s)mấy(?=$|\s)/u.test(normalized);
+  const fullList = FULL_LIST.test(ascii) && !asksNumber;
+  if (LIST.test(rest) || fullList) {
+    return { ...spec('LIET_KE', measure === 'CHENH_LECH' ? 'TONG_QUAN' : measure, filters), ...(fullList ? { fullList } : {}) };
   }
   // Không đoán bừa: phải hỏi số tiền ("bao nhiêu", "mấy", "tổng"…), hoặc nêu kỳ / danh mục / đối tượng / quỹ chung.
   // Chỉ có trợ từ hỏi + động từ ("huỷ lệnh xác nhận được không") → không hiểu.

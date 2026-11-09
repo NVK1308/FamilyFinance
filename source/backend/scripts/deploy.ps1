@@ -254,6 +254,7 @@ function Step5 {
   if ($c.co_cac_con -lt 1) { Fail 'Neon chua co doi tuong CAC_CON (Phase 5b) - chay temp/neon/04_them_cac_con.sql truoc' }
   if ($c.co_hu_tiet_kiem -lt 1) { Fail 'Neon chua co bang hu_tiet_kiem (Phase 5c) - chay temp/neon/05_hu_tiet_kiem.sql truoc' }
   if ($c.co_nhieu_hu -lt 1) { Fail 'Neon chua co nhieu hu (migration 0005) - chay temp/neon/06_nhieu_hu.sql truoc' }
+  if ($c.hu_dung_kieu -lt 1) { Fail 'Bang hu tren Neon sai kieu (lo chay ban SQLite) - chay temp/neon/07_sua_bang_hu.sql' }
   if (-not (Confirm-Go 'Ghi 2 secret nay vao Worker?')) { Fail 'Da dung' }
   Set-WorkerSecrets @{ TELEGRAM_BOT_TOKEN = $token; NEON_DATABASE_URL = $neon }
 }

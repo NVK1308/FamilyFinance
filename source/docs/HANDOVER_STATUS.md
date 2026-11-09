@@ -105,6 +105,12 @@
 
 ---
 
+### ✅ Phase 5d — Lệnh tắt tổng hợp + liệt kê chi tiết (CODE XONG 09/11, 277/277 test; CHƯA COMMIT, CHƯA DEPLOY)
+- Plan: `E:\QuangIch\AIWorkspace\sessions\FamilyFinance\2026-11-09_lenh-tat-liet-ke\`. Chi tiết [QUERY_RULES.md](QUERY_RULES.md) mục 3 (Liệt kê chi tiết) + 3c.
+- "liệt kê chi tiết / tất cả …" → mọi khoản, nhóm người → Thu/Chi → danh mục → ngày; tối đa 31 ngày cuối kỳ đã chọn, 300 khoản; tự tách tin dài.
+- `/tuan`, `/thang` [trước | 10 | 10/2025] [vợ | chồng] → 1 tin tổng hợp (dùng lại QueryService). `/thang` cũ thay bằng bản tổng hợp.
+- Kèm các sửa sau sự cố bảng `hu` trên Neon: tin thường không lỗi khi bảng hũ lỗi, `/taohu` bỏ dấu `<>[]`, cảnh báo đầu file migration SQLite, deploy bước 5 kiểm kiểu bảng `hu` (`temp/neon/07_sua_bang_hu.sql`).
+
 ## 3. Công Việc Tiếp Theo
 
 - **Deploy 5b + 5c-1 (nhiều hũ)**: Neon chạy lần lượt `temp/neon/04_them_cac_con.sql` → `05_hu_tiet_kiem.sql` → `06_nhieu_hu.sql` (file nào đã chạy thì bỏ qua; chạy lại cũng không sao), sau đó `deploy.ps1 -From 3 -To 4 -Yes`. Thử câu hỏi thật, câu sai → bổ sung luật (xem tin `CAU_HOI_CHUA_HIEU`).

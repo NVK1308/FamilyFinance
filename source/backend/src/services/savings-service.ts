@@ -77,8 +77,16 @@ export class SavingsService {
   // Tên hũ đang có (ASCII) — truyền cho parser. Nhớ trong đời instance (1 instance / 1 update), xoá khi tạo hũ.
   private jarNamesCache: Promise<string[]> | null = null;
 
+  // Đọc lỗi (vd Neon chưa chạy migration 0005) → [] để tin thu/chi thường vẫn ghi được; lệnh hũ sẽ báo lỗi riêng.
   jarNames(): Promise<string[]> {
-    this.jarNamesCache ??= listActiveJars(this.db).then((jars) => jars.map((j) => j.ten_khong_dau));
+    this.jarNamesCache ??= listActiveJars(this.db).then(
+      (jars) => jars.map((j) => j.ten_khong_dau),
+      (error: unknown) => {
+        console.error('Không đọc được danh sách hũ (đã chạy temp/neon/06_nhieu_hu.sql chưa?)', error);
+        this.jarNamesCache = null;
+        return [];
+      },
+    );
     return this.jarNamesCache;
   }
 

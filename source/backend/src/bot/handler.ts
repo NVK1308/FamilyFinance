@@ -23,7 +23,7 @@ import type { BotAction, InlineKeyboard, TgCallbackQuery, TgMessage, TgUpdate } 
 import { decodeCallback, type CallbackData } from './callback-data.ts';
 import { parseCommand, runCommand } from './commands.ts';
 import { memberChatId, otherMember } from './members.ts';
-import { ACTION_HELP, QUERY_HELP, queryAnswerText, remindText } from './query-replies.ts';
+import { ACTION_HELP, QUERY_HELP, queryAnswerText, remindText, splitTelegramText } from './query-replies.ts';
 import {
   DONE_BUT_ERROR_TEXT,
   EDITED_TEXT,
@@ -245,7 +245,8 @@ async function outcomeActions(
         return [send(ACTION_HELP)];
       }
       if (parsed.intent === MESSAGE_INTENT.QUERY_STATISTICS) {
-        return [send(await answerQuestion(ctx, member, incoming, parsed))];
+        // Liệt kê đủ có thể dài → tách nhiều tin
+        return splitTelegramText(await answerQuestion(ctx, member, incoming, parsed)).map((t) => send(t));
       }
       if (parsed.intent === MESSAGE_INTENT.EXPORT_HTML_REPORT) {
         return [send(QUESTION_TEXT)];
@@ -283,7 +284,7 @@ async function answerQuestion(
     });
     return QUERY_HELP;
   }
-  return queryAnswerText(await ctx.queries.run(spec, parsed.ngay_tham_chieu), parsed.co_so_tien);
+  return queryAnswerText(await ctx.queries.run(spec, parsed.ngay_tham_chieu), parsed.co_so_tien, parsed.ngay_tham_chieu);
 }
 
 export const UNKNOWN_QUESTION = 'CAU_HOI_CHUA_HIEU';

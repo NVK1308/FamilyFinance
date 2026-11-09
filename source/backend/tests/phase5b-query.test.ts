@@ -402,7 +402,10 @@ for (const backend of BACKENDS) {
       );
       const all = await ask(VO, 'liệt kê giao dịch tháng này');
       assert.match(all, /^📋 Thu\/chi · tháng 11\/2026 \(01\/11–30\/11\): thu 20\.000\.000đ, chi 2\.150\.000đ · 6 khoản/);
-      assert.match(await ask(VO, 'chi tiết các khoản thu tháng này'), /^📋 Thu · .*: 20\.000\.000đ · 1 khoản\n• 05\/11 \+20\.000\.000đ Lương \(Chồng\)$/);
+      assert.equal(
+        await ask(VO, 'chi tiết các khoản thu tháng này'),
+        '📋 Thu · tháng 11/2026 (01/11–30/11): 20.000.000đ · 1 khoản\n👤 Chồng\n  Thu: 20.000.000đ\n    Lương: 20.000.000đ\n      • 05/11: 20.000.000đ',
+      );
       assert.match(await ask(VO, 'so sánh chi tiêu của vợ và chồng'), /• Vợ: 1\.500\.000đ \(3\)\n• Chồng: 650\.000đ \(2\)/);
       assert.match(await ask(VO, 'ai đang giữ nhiều tiền nhất'), /Số dư đến 05\/11/);
       assert.match(all, /• 05\/11 \+20\.000\.000đ Lương \(Chồng\)/);

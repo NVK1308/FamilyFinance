@@ -1,3 +1,4 @@
+-- ⚠️ CHỈ DÙNG CHO SQLite (app desktop / test). KHÔNG chạy trên Neon — Neon dùng temp/neon/0x_*.sql (bản Postgres).
 -- =====================================================================
 -- FamilyFinance v4.0 - Migration 0005 (SQLite)
 -- Cùng nội dung bản Postgres: nhiều hũ có tên. Lưu ý: SQLite không có
