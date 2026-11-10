@@ -67,6 +67,8 @@ export interface ParsedFundTransferResult {
   intent: typeof MESSAGE_INTENT_FUND;
   chieu: FundDirection;
   thanh_vien_id: MemberId;
+  // RUT: tiền quỹ chung về người này (người kia); null = người gửi
+  nguoi_nhan_id: MemberId | null;
   so_tien: number | null;
   so_tien_mo_ho: boolean;
   ngay_chuyen: string;

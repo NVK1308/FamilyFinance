@@ -34,6 +34,8 @@ import {
   categoryKeyboard,
   formatDay,
   formatMoney,
+  fundCancelNoticeText,
+  fundToOther,
   fundNoticeText,
   jarExpenseNoticeText,
   savingsCancelNoticeText,
@@ -225,7 +227,9 @@ async function outcomeActions(
       const actions: BotAction[] = [send(fundText(f, outcome.canhBaoVuotSoDu), f.trang_thai === 'HOAN_TAT' ? cancelButton('qc', f.id) : undefined)];
       const other = outcome.duplicate ? null : await memberChatId(ctx.db, otherMember(f.thanh_vien_id));
       if (other !== null) {
-        actions.push({ type: 'send', chatId: other, text: fundNoticeText(f) });
+        // Quỹ đưa thẳng người nhận: người nhận có nút Huỷ (không có bước xác nhận)
+        const keyboard = fundToOther(f) && f.trang_thai === 'HOAN_TAT' ? { keyboard: cancelButton('qc', f.id) } : {};
+        actions.push({ type: 'send', chatId: other, text: fundNoticeText(f), ...keyboard });
       }
       return actions;
     }
@@ -405,9 +409,10 @@ async function runCallback(
     case 'qc': {
       const res = await ctx.transfers.cancelFundMove(data.id, me);
       const actions: BotAction[] = [answer(res.changed ? 'Đã huỷ' : 'Khoản này đã huỷ trước đó.'), ...edit(fundText(res.fundMove, false))];
-      const other = res.changed ? await memberChatId(ctx.db, otherMember(res.fundMove.thanh_vien_id)) : null;
+      // Người nhận cũng huỷ được (quỹ đưa thẳng) → báo người còn lại, không phải người ghi
+      const other = res.changed ? await memberChatId(ctx.db, otherMember(me)) : null;
       if (other !== null) {
-        actions.push({ type: 'send', chatId: other, text: `ℹ️ ${memberName(me)} đã huỷ: ${fundNoticeText(res.fundMove).replace(/^ℹ️ /, '')}` });
+        actions.push({ type: 'send', chatId: other, text: fundCancelNoticeText(res.fundMove, me) });
       }
       return actions;
     }

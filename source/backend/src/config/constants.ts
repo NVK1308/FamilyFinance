@@ -198,6 +198,7 @@ export const TABLE_NAME = {
   CHUYEN_QUY_CHUNG: 'chuyen_quy_chung',
   HU_TIET_KIEM: 'hu_tiet_kiem',
   HU: 'hu',
+  GIA_VANG: 'gia_vang',
   LICH_SU_NO: 'lich_su_no',
   YEU_CAU_XAC_NHAN: 'yeu_cau_xac_nhan',
   LICH_SU_CHINH_SUA: 'lich_su_chinh_sua',

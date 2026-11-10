@@ -233,6 +233,12 @@ erDiagram
 - `hu_tiet_kiem.giao_dich_id` (FK `giao_dich`, partial UNIQUE): dòng `RUT` đi kèm **khoản chi trả từ hũ** — cùng ngày, cùng số tiền, nguồn = người giữ của giao dịch → tiền mặt người trả không đổi, hũ giảm, chi tháng tăng. Huỷ giao dịch → huỷ dòng đi kèm cùng transaction; không huỷ riêng được; giao dịch này không đổi sang Thu.
 - SQLite: phần ALTER của 0005 chỉ chạy 1 lần (runner theo dõi số migration). Neon: `temp/neon/06_nhieu_hu.sql` (tự dừng nếu chưa chạy 05).
 
+### 3.1e. Giá vàng thị trường — bảng `gia_vang` (migration 0006 — bảng thứ 20)
+- `gia_vang`: `gia_chi` (giá 1 chỉ, > 0), `ngay`, `thanh_vien_id`, `idempotency_key` (UNIQUE, `tg:<update_id>`), version / xoá mềm. Nhập bằng `/giavang`. Không phải dòng tiền, không đụng số dư.
+- Định giá vàng trong hũ: giá `/giavang` mới nhất nếu mới hơn (ngày, rồi `version`) dòng vàng mua/bán có giá gần nhất; chưa có mua/bán thì so với khai báo có giá.
+- Neon: `temp/neon/08_gia_vang.sql`. Đồng bộ desktop: có trong `syncTablesOrder`.
+- `chuyen_quy_chung` (3.1b) dùng thêm cho **rút quỹ đưa thẳng người kia**: `chieu = RUT`, `thanh_vien_id` = người ghi, `nhom_id` = người nhận (không đổi schema).
+
 ### 3.2. Ràng buộc trên bảng `chuyen_tien_noi_bo`
 - `nguoi_chuyen_id <> nguoi_nhan_id`: Không thể tự chuyển cho chính mình.
 - `so_tien > 0`.

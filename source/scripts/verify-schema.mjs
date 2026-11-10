@@ -13,6 +13,8 @@ const sqlite0004Path = `${root}/desktop/FamilyFinance.Data/Migrations/0004_hu_ti
 const postgres0004Path = `${root}/backend/migrations/0004_hu_tiet_kiem.postgres.sql`;
 const sqlite0005Path = `${root}/desktop/FamilyFinance.Data/Migrations/0005_nhieu_hu.sqlite.sql`;
 const postgres0005Path = `${root}/backend/migrations/0005_nhieu_hu.postgres.sql`;
+const sqlite0006Path = `${root}/desktop/FamilyFinance.Data/Migrations/0006_gia_vang.sqlite.sql`;
+const postgres0006Path = `${root}/backend/migrations/0006_gia_vang.postgres.sql`;
 const postgresSchemaPath = `${root}/backend/migrations/0001_initial_schema.postgres.sql`;
 const seedPath = `${root}/backend/seeds/0001_seed_reference_data.sql`;
 const contractsPath = `${root}/shared/contracts/domain-contracts.json`;
@@ -173,10 +175,25 @@ for (const part of ['ADD COLUMN IF NOT EXISTS hu_id', 'ADD COLUMN IF NOT EXISTS 
 }
 assert.ok(syncOrder.indexOf('hu') >= 0 && syncOrder.indexOf('hu') < syncOrder.indexOf('hu_tiet_kiem'), 'syncTablesOrder: hu phải trước hu_tiet_kiem');
 
+// 9. Migration 0006: gia_vang (20 bảng), giá > 0, chạy lại được
+db.exec(fs.readFileSync(sqlite0006Path, 'utf8'));
+db.exec(fs.readFileSync(sqlite0006Path, 'utf8'));
+const tables0006 = db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(r => r.name);
+assert.equal(tables0006.length, 20, `Sau 0006 phải có 20 bảng, có ${tables0006.length}`);
+assert.throws(() => db.prepare(`
+  INSERT INTO gia_vang (id, gia_chi, ngay, thanh_vien_id, idempotency_key, created_at, updated_at) VALUES ('G0', 0, '2026-11-10', 'VO', 'k0', 'x', 'x')
+`).run(), /CHECK constraint failed/);
+const pg0006 = fs.readFileSync(postgres0006Path, 'utf8');
+const pgTables0006 = [...pg0006.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g)].map(m => m[1]);
+assert.deepEqual([...pgTables, ...pgTables0003, ...pgTables0004, ...pgTables0005, ...pgTables0006].sort(), tables0006, 'Bảng Postgres (0001+0003..0006) phải khớp SQLite');
+assert.ok(pg0006.includes("DEFAULT nextval('sync_version_seq')"), '0006 Postgres thiếu version seq');
+assert.ok(syncOrder.includes('gia_vang'), 'syncTablesOrder thiếu gia_vang');
+
 console.log('✅ Schema & Contracts Verification PASSED!');
 console.log('   - Tables verified (PostgreSQL & SQLite 1:1):', tables.length);
 console.log(`   - Seed data verified: ${memberCount} members, ${categoryCount} categories, ${keywordCount} keywords, ${beneficiaryCount} beneficiaries`);
 console.log('   - Integrity constraints verified: positive amount, distinct transfer parties, valid money holder');
+console.log('   - Migration 0006 verified: gia_vang (20 bảng), giá > 0, chạy lại được');
 console.log('   - Migration 0005 verified: hu (19 bảng), hu_id/giao_dich_id, tên hũ duy nhất (trừ hũ đã xoá), dòng cũ → TIET_KIEM');
 console.log('   - Migration 0004 verified: hu_tiet_kiem (18 bảng), CHECK tiền/vàng/khai báo/nguồn, chạy lại được');
 console.log('   - Migration 0003 verified: chuyen_quy_chung (17 bảng), CHECK chieu/nhom_id/so_tien/trang_thai, chạy lại được');

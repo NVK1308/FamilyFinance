@@ -1,5 +1,6 @@
 import {
   CONFIRMATION_TYPE,
+  FUND_DIRECTION,
   MESSAGE_INTENT,
   ASSET_TYPE,
   SAVINGS_DIRECTION,
@@ -11,7 +12,7 @@ import {
 import { extractAmountVnd } from './amount-parser.ts';
 import { matchCategoryAndType } from './category-matcher.ts';
 import { extractTransactionDate } from './date-parser.ts';
-import { detectFundTransfer } from './fund-detector.ts';
+import { detectFundTransfer, isFromFundOnly } from './fund-detector.ts';
 import { parseGold } from './gold-detector.ts';
 import { classifyIntent } from './intent-classifier.ts';
 import { createParseContext } from './normalizer.ts';
@@ -76,14 +77,32 @@ export function parseVietnameseFinanceMessage(
       confirmations.push(CONFIRMATION_TYPE.CHUYEN_TIEN);
     }
 
-    // Chưa hỗ trợ: chủ ngữ là người khác ("vợ chuyển chồng" do chồng nhắn, Q6);
-    // tiền lấy từ quỹ chung chuyển cho người kia ("chuyển vợ 2tr từ quỹ chung")
+    // Chưa hỗ trợ: chủ ngữ là người khác ("vợ chuyển chồng" do chồng nhắn, Q6)
     const subject = classification.transferSubjectId;
     let unsupported: string | null = null;
     if (subject !== null && subject !== ctx.senderId) {
       unsupported = 'CHU_NGU_KHAC_NGUOI_GUI';
     } else if (/\bquy\s+chung\b/i.test(ctx.asciiText)) {
-      unsupported = 'CHUYEN_TU_QUY_CHUNG';
+      // "chuyển vợ 2tr từ quỹ chung": rút quỹ chung, tiền về thẳng người nhận (ghi ngay; người nhận huỷ được).
+      // Cách nói khác ("chuyển vợ 2tr cho quỹ chung", "…, quỹ chung còn 5tr") → nhắc, không đoán.
+      const recipient = classification.transferRecipientId;
+      if (!isFromFundOnly(ctx.workingAsciiText)) {
+        unsupported = 'CHUYEN_TU_QUY_CHUNG';
+      } else if (recipient === ctx.senderId) {
+        unsupported = 'TU_CHUYEN_CHO_MINH';
+      } else {
+        return {
+          intent: MESSAGE_INTENT.FUND_TRANSFER,
+          chieu: FUND_DIRECTION.RUT,
+          thanh_vien_id: ctx.senderId,
+          nguoi_nhan_id: recipient,
+          so_tien: amountResult.isAmbiguous ? null : amountResult.amount,
+          so_tien_mo_ho: amountResult.isAmbiguous,
+          ngay_chuyen: transferDate,
+          ly_do_chua_ho_tro: null,
+          mo_ta: ctx.rawText,
+        };
+      }
     }
     return {
       intent: MESSAGE_INTENT.INTERNAL_TRANSFER,
@@ -138,6 +157,7 @@ export function parseVietnameseFinanceMessage(
         intent: MESSAGE_INTENT.FUND_TRANSFER,
         chieu: fund.chieu,
         thanh_vien_id: ctx.senderId,
+        nguoi_nhan_id: fund.nguoiNhan,
         so_tien: amountResult.isAmbiguous ? null : amountResult.amount,
         so_tien_mo_ho: amountResult.isAmbiguous,
         ngay_chuyen: transactionDate,

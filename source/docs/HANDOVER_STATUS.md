@@ -123,9 +123,17 @@
 - Hiển thị: `/tietkiem`, `/sodu`, câu hỏi hũ / vàng (QUERY_RULES mục 3). `/tietkiemdau 3 chỉ vàng [42tr | 14tr/chỉ] [hũ]`. Không đặt được tên hũ "vàng".
 - Test: [phase5c-gold.test.ts](file:///F:/FamilyFinance/source/backend/tests/phase5c-gold.test.ts). Code review high: 10 điểm, đã sửa hết.
 
+### ✅ Quỹ chung → vợ/chồng + `/giavang` (CODE XONG 10/11, 304/304 test, typecheck + verify-schema sạch; CHƯA COMMIT, CHƯA DEPLOY)
+- Người dùng chốt (10/11): bỏ "đổi tiền hũ ↔ vàng" (giữ nhắn 2 tin); làm `/giavang`; làm chuyển quỹ chung thẳng cho vợ/chồng; Phase 6 = báo cáo tháng gửi Telegram (HTML + ảnh tóm tắt).
+- **Quỹ chung → người kia**: "chuyển vợ 2tr từ quỹ chung", "đưa vợ 2tr tiền quỹ chung", "rút / lấy quỹ chung cho / đưa vợ 2tr", "chuyển quỹ chung cho vợ 2tr" → 1 dòng `chuyen_quy_chung` RUT, `thanh_vien_id` = người ghi, `nhom_id` = người nhận (không migration). Ghi ngay (như mọi dòng quỹ chung), báo người nhận **kèm nút Huỷ** — người ghi hoặc người nhận huỷ được. Câu mơ hồ ("chuyển vợ 2tr cho quỹ chung", "…, quỹ chung còn 5tr") → nhắc; "chuyển chồng … từ quỹ chung" do chồng nhắn → không chuyển cho mình.
+- **`/giavang`**: bảng mới `gia_vang` (migration 0006, Neon `temp/neon/08_gia_vang.sql`; deploy bước 5 kiểm `co_gia_vang`). `/giavang 15tr` (1 chỉ), `/giavang 150tr lượng`, `/giavang` (xem giá đang dùng). Giá đang dùng = giá `/giavang` nếu mới hơn (ngày, rồi thứ tự ghi) lần mua/bán có giá gần nhất (chưa có mua/bán thì so với khai báo). Lệch > 30% giá trước → cảnh báo gõ nhầm. Neon chưa có bảng → chỉ bỏ qua giá thị trường (đọc ngoài transaction), mua/bán vàng vẫn ghi.
+- Test: [phase5e-fund-to-member.test.ts](file:///F:/FamilyFinance/source/backend/tests/phase5e-fund-to-member.test.ts), phase5c-gold (mục /giavang). Code review high: 10 điểm, đã sửa hết.
+
 ## 3. Công Việc Tiếp Theo
 
 - **Deploy 5b + 5c-1 (nhiều hũ)**: Neon chạy lần lượt `temp/neon/04_them_cac_con.sql` → `05_hu_tiet_kiem.sql` → `06_nhieu_hu.sql` (file nào đã chạy thì bỏ qua; chạy lại cũng không sao), sau đó `deploy.ps1 -From 3 -To 4 -Yes`. Thử câu hỏi thật, câu sai → bổ sung luật (xem tin `CAU_HOI_CHUA_HIEU`).
-- **Sau 5c-2 (để sau)**: đổi tiền trong hũ ↔ vàng (2 dòng liên kết), `/giavang` cập nhật giá thị trường, quản lý hũ (đổi tên / ẩn / sửa mục tiêu), khoản "mua vàng" đã ghi Chi trước 5c-2 không tự chuyển.
-- **Phase 6**: báo cáo thống kê dạng file.
+- **Deploy 5c-2 + quỹ → vợ/chồng + /giavang**: Neon chạy `temp/neon/08_gia_vang.sql`, rồi `deploy.ps1 -From 3 -To 4 -Yes`.
+- **Phase 6 — báo cáo tháng** (đang plan): ảnh PNG tóm tắt + file HTML gửi cả 2 người ngày 1 hằng tháng + `/baocao`. Plan: `E:\QuangIch\AIWorkspace\sessions\FamilyFinance\2026-11-10_bao-cao-thang\plan.md` (chờ chốt Q1–Q5).
+- **Để sau**: quản lý hũ (đổi tên / ẩn / sửa mục tiêu); khoản "mua vàng" đã ghi Chi trước 5c-2 không tự chuyển. **Không làm** (người dùng chốt 10/11): đổi tiền hũ ↔ vàng trong 1 tin — giữ nhắn 2 tin.
+- **Còn thiếu khi dùng hằng ngày** (rà theo [HUONG_DAN_SU_DUNG.md](HUONG_DAN_SU_DUNG.md) mục 6): sửa khoản đã ghi (hiện chỉ Huỷ + nhắn lại), thống kê nợ, điều chỉnh số dư qua chat. Gợi ý mới (chưa chốt): ngân sách theo danh mục + cảnh báo, khoản định kỳ (nhắc hằng tháng, 1 nút ghi), tách ví / tài khoản ngân hàng. Đề xuất ưu tiên: sửa khoản + khoản định kỳ.
 - Dồn lại: version seed (Phase 7), khoá kỳ đã chốt (Phase 8), test kết nối Neon WS thật (Phase 10).

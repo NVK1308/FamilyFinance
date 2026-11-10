@@ -220,6 +220,34 @@ for (const backend of BACKENDS) {
       assert.equal(await reply(VO, '/sodu'), before);
     });
 
+    it('/giavang: đặt giá → định giá theo giá mới hơn; mua sau đó lại dùng giá mua; giá 1 lượng; chưa có bảng vẫn chạy', async () => {
+      await say(VO, 'mua vàng 2 chỉ 14tr/chỉ');
+      const set = await say(VO, '/giavang 15tr');
+      assert.equal(sentTo(set, VO)[0]?.text, '✅ Giá vàng 05/11: 15.000.000đ/chỉ\nVàng đang có: 2 chỉ ≈ 30.000.000đ');
+      assert.equal(sentTo(set, CHONG)[0]?.text, 'ℹ️ Vợ cập nhật giá vàng: 15.000.000đ/chỉ.');
+      assert.match(await reply(VO, '/tietkiem'), /vàng 2 chỉ \(≈ 30\.000\.000đ\)[\s\S]*Giá vàng nhập bằng \/giavang: 15\.000\.000đ\/chỉ \(05\/11\)/);
+      await say(VO, 'mua vàng 1 chỉ 15tr5');
+      assert.match(await reply(VO, '/giavang'), /^Giá vàng theo lần mua\/bán gần nhất: 15\.500\.000đ\/chỉ \(05\/11\)\nVàng đang có: 3 chỉ ≈ 46\.500\.000đ/);
+      assert.match(await reply(CHONG, '/giavang 160tr lượng'), /^✅ Giá vàng 05\/11: 16\.000\.000đ\/chỉ/);
+      assert.match(await reply(VO, '/giavang 15tr/chỉ'), /^✅ Giá vàng 05\/11: 15\.000\.000đ\/chỉ/);
+      assert.match(await reply(VO, '/giavang abc'), /^Chưa rõ giá\./);
+      assert.match(await reply(VO, 'mua vàng 1 chỉ 1tr'), /lệch xa giá đang dùng 15\.000\.000đ\/chỉ/);
+      // Quên chữ "lượng" → cảnh báo lệch xa
+      assert.match(await reply(VO, '/giavang 150tr'), /⚠️ Lệch xa giá trước đó 1\.000\.000đ\/chỉ/);
+    });
+
+    it('code review: Neon chưa có bảng gia_vang (xoá bảng thật) → mua / bán vàng, /tietkiem vẫn chạy; /giavang cũ không đè khai báo mới', async () => {
+      h.setNow('2026-10-01T03:00:00.000Z');
+      await say(VO, '/giavang 8tr');
+      h.setNow('2026-11-05T03:00:00.000Z');
+      await say(VO, '/tietkiemdau 3 chỉ vàng 45tr');
+      assert.match(await reply(VO, '/tietkiem'), /Giá vàng theo lần khai báo gần nhất: 15\.000\.000đ\/chỉ/);
+      await env.db.execute('DROP TABLE gia_vang');
+      assert.match(await reply(VO, 'mua vàng 1 chỉ 14tr'), /^🏺 Mua vàng 1 chỉ vào hũ Tiết kiệm 14\.000\.000đ/);
+      assert.match(await reply(VO, '/tietkiem'), /vàng 4 chỉ \(≈ 56\.000\.000đ\)/);
+      await assertInvariant(env, TODAY, 'không có gia_vang');
+    });
+
     it('/tietkiemdau vàng; huỷ dòng vàng trả lại tiền; câu hỏi 1 hũ có vàng', async () => {
       assert.match(await reply(VO, '/tietkiemdau 3 chỉ vàng 42tr'), /^🏺 Khai báo vàng 3 chỉ vào hũ Tiết kiệm 42\.000\.000đ \(14\.000\.000đ\/chỉ\) · không trừ tiền ai/);
       await say(VO, '/taohu Mua nhà');

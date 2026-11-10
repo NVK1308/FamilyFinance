@@ -17,7 +17,10 @@ import {
   getSavingsMoveByIdempotencyKey,
   getSavingsMoveByTransaction,
   insertJar,
+  getGoldMarketPriceByKey,
+  insertGoldMarketPrice,
   insertSavingsMove,
+  latestGoldMarketPrice,
   latestGoldPrice,
   listActiveJars,
   listRecentSavingsMoves,
@@ -27,7 +30,7 @@ import {
   sumSavingsCashByJar,
   updateMessageStatus,
 } from '../db/repositories/index.ts';
-import type { DatabaseAdapter, HuRecord, HuTietKiemRecord, ThanhVienRecord } from '../db/types.ts';
+import type { DatabaseAdapter, GiaVangRecord, HuRecord, HuTietKiemRecord, ThanhVienRecord } from '../db/types.ts';
 import { normalizeWhitespace, removeVietnameseDiacritics } from '../parser/normalizer.ts';
 import type { ParsedSavingsResult } from '../parser/types.ts';
 import { BalanceService } from './balance-service.ts';
@@ -61,8 +64,8 @@ export interface GoldPrice {
   soTien: number;
   phan: number;
   ngay: string;
-  // Giá lấy từ dòng khai báo (chưa có lần mua / bán nào có giá)
-  khaiBao: boolean;
+  // THI_TRUONG: /giavang; MUA_BAN: lần mua / bán có giá; KHAI_BAO: dự phòng khi chưa có 2 loại kia
+  nguon: 'THI_TRUONG' | 'MUA_BAN' | 'KHAI_BAO';
 }
 
 // Mọi hũ: từng hũ + tổng tiền, tổng vàng, giá trị vàng (null = chưa định giá)
@@ -89,6 +92,10 @@ export function goldPricePerChi(gia: GoldPrice): number {
 
 // Đơn giá lệch quá mức này so với giá đang dùng → cảnh báo (gõ nhầm "1tr4" thay "14tr")
 const GOLD_PRICE_DEVIATION = 0.3;
+
+export function isFarFromPrice(giaChi: number, ref: number): boolean {
+  return Math.abs(giaChi - ref) > ref * GOLD_PRICE_DEVIATION;
+}
 
 const JAR_NAME_MAX = 30;
 // Tên dành riêng: "chung" (quỹ chung), "vàng" (câu vàng)
@@ -139,6 +146,8 @@ export class SavingsService {
   async recordFromParsed(msg: IncomingMessage, parsed: ParsedSavingsResult, sender: ThanhVienRecord): Promise<RecordOutcome> {
     const now = this.now();
     const nowIso = now.toISOString();
+    // Giá đang dùng (để cảnh báo lệch giá) đọc ngoài transaction: lỗi đọc gia_vang không làm hỏng lệnh ghi
+    const giaTruoc = parsed.loai_tai_san === ASSET_TYPE.VANG && parsed.so_tien !== null ? await this.goldPrice(parsed.ngay) : null;
     const outcome = await withDuplicateFallback(this.db, msg.updateId, () =>
       this.db.transaction(async (tx): Promise<RecordOutcome> => {
         const messageId = await insertIncomingMessage(tx, msg, sender.id, nowIso);
@@ -162,7 +171,6 @@ export class SavingsService {
         }
         const declare = parsed.chieu === SAVINGS_DIRECTION.KHAI_BAO;
         const soTien = parsed.so_tien;
-        const giaTruoc = gold && soTien !== null ? await this.goldPrice(parsed.ngay, tx) : null;
         const move = await this.insert(tx, {
           chieu: parsed.chieu,
           huId: jar.id,
@@ -379,11 +387,67 @@ export class SavingsService {
     return { rows, gia, tien: sumValues(cash), vangPhan, vangGiaTri: goldValue(vangPhan, gia) };
   }
 
+  // Giá đang dùng: giá /giavang nếu mới hơn (ngày, rồi thứ tự ghi) lần mua / bán có giá gần nhất
+  // (chưa có mua / bán thì so với lần khai báo có giá gần nhất)
   async goldPrice(asOf: string, db: DatabaseAdapter = this.db): Promise<GoldPrice | null> {
-    const row = await latestGoldPrice(db, asOf);
-    return row && row.so_tien !== null && row.so_luong_phan
-      ? { soTien: row.so_tien, phan: row.so_luong_phan, ngay: row.ngay, khaiBao: row.chieu === SAVINGS_DIRECTION.KHAI_BAO }
-      : null;
+    const [row, market] = await Promise.all([latestGoldPrice(db, asOf), this.latestMarket(db, asOf)]);
+    const trade: GoldPrice | null =
+      row && row.so_tien !== null && row.so_luong_phan
+        ? { soTien: row.so_tien, phan: row.so_luong_phan, ngay: row.ngay, nguon: row.chieu === SAVINGS_DIRECTION.KHAI_BAO ? 'KHAI_BAO' : 'MUA_BAN' }
+        : null;
+    const marketNewer =
+      market !== null && (trade === null || market.ngay > trade.ngay || (market.ngay === trade.ngay && market.version > Number(row?.version)));
+    return marketNewer ? { soTien: market.gia_chi, phan: 10, ngay: market.ngay, nguon: 'THI_TRUONG' } : trade;
+  }
+
+  // Bảng gia_vang chưa có (Neon chưa chạy 08_gia_vang.sql) → bỏ qua giá thị trường, các chỗ khác vẫn chạy
+  private async latestMarket(db: DatabaseAdapter, asOf: string): Promise<GiaVangRecord | null> {
+    try {
+      return await latestGoldMarketPrice(db, asOf);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (!/gia_vang/.test(msg) || !/does not exist|no such table/i.test(msg)) {
+        throw error;
+      }
+      console.error('Chưa có bảng gia_vang (chạy temp/neon/08_gia_vang.sql) — bỏ qua giá thị trường');
+      return null;
+    }
+  }
+
+  // /giavang 15tr: giá 1 chỉ hôm nay. key chống ghi 2 lần khi Telegram gửi lại.
+  async setMarketPrice(sender: ThanhVienRecord, giaChi: number, key: string): Promise<{ price: GiaVangRecord; duplicate: boolean }> {
+    if (!Number.isSafeInteger(giaChi) || giaChi <= 0) {
+      throw new DomainError('INVALID_INPUT', 'Giá phải lớn hơn 0');
+    }
+    if (memberGroup(sender) === null) {
+      throw new DomainError('FORBIDDEN', 'HU_NGUOI_GUI_KHONG_HOP_LE');
+    }
+    const existing = await getGoldMarketPriceByKey(this.db, key);
+    if (existing) {
+      return { price: existing, duplicate: true };
+    }
+    const nowIso = this.now().toISOString();
+    try {
+      const price = await this.db.transaction(async (tx) => {
+        const created = await insertGoldMarketPrice(tx, {
+          id: newId('GV'),
+          gia_chi: giaChi,
+          ngay: toVnDate(this.now()),
+          thanh_vien_id: sender.id as MemberId,
+          idempotency_key: key,
+          nowIso,
+        });
+        await audit(tx, TABLE_NAME.GIA_VANG, created.id, AUDIT_ACTION.CREATE, null, created, sender.id as MemberId, nowIso);
+        return created;
+      });
+      return { price, duplicate: false };
+    } catch (error) {
+      const raced = isUniqueViolation(error) ? await getGoldMarketPriceByKey(this.db, key) : null;
+      if (raced) {
+        return { price: raced, duplicate: true };
+      }
+      throw error;
+    }
   }
 
   // Bán vàng không nêu hũ: đúng 1 hũ đang dùng có vàng → hũ đó; nhiều hũ → 'NHIEU'; không hũ nào → hũ mặc định
@@ -478,8 +542,7 @@ function priceDeviation(move: HuTietKiemRecord, gia: GoldPrice | null): number |
     return null;
   }
   const ref = goldPricePerChi(gia);
-  const unit = pricePerChi(move.so_tien, move.so_luong_phan);
-  return Math.abs(unit - ref) > ref * GOLD_PRICE_DEVIATION ? ref : null;
+  return isFarFromPrice(pricePerChi(move.so_tien, move.so_luong_phan), ref) ? ref : null;
 }
 
 function sumValues(m: Map<string, number>): number {
@@ -507,7 +570,7 @@ function rejectReason(parsed: ParsedSavingsResult, group: 'VO' | 'CHONG' | null,
 
 async function audit(
   tx: DatabaseAdapter,
-  table: typeof TABLE_NAME.HU_TIET_KIEM | typeof TABLE_NAME.HU,
+  table: typeof TABLE_NAME.HU_TIET_KIEM | typeof TABLE_NAME.HU | typeof TABLE_NAME.GIA_VANG,
   id: string,
   action: (typeof AUDIT_ACTION)[keyof typeof AUDIT_ACTION],
   before: unknown,

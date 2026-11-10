@@ -27,7 +27,9 @@ async function main() {
             WHERE table_schema = 'public' AND table_name = 'hu_tiet_kiem' AND column_name = 'hu_id')::int AS co_nhieu_hu,
          -- Bảng hu đúng bản Postgres (lỡ chạy bản SQLite → is_active integer → sửa bằng 07_sua_bang_hu.sql)
          (SELECT COUNT(*) FROM information_schema.columns
-            WHERE table_schema = 'public' AND table_name = 'hu' AND column_name = 'is_active' AND data_type = 'boolean')::int AS hu_dung_kieu`,
+            WHERE table_schema = 'public' AND table_name = 'hu' AND column_name = 'is_active' AND data_type = 'boolean')::int AS hu_dung_kieu,
+         (SELECT COUNT(*) FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'gia_vang')::int AS co_gia_vang`,
     );
     console.log(JSON.stringify(rows[0]));
     return;

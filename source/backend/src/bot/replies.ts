@@ -26,8 +26,14 @@ export function assetText(tien: number, vangPhan: number, vangGiaTri: number | n
   return `${formatMoney(tien)} + vàng ${formatGold(vangPhan)} (${vangGiaTri === null ? 'chưa định giá' : `≈ ${formatMoney(vangGiaTri)}`})`;
 }
 
+const GOLD_PRICE_SOURCE: Record<GoldPrice['nguon'], string> = {
+  THI_TRUONG: 'nhập bằng /giavang',
+  MUA_BAN: 'theo lần mua/bán gần nhất',
+  KHAI_BAO: 'theo lần khai báo gần nhất',
+};
+
 export function goldPriceLine(gia: GoldPrice | null): string[] {
-  return gia ? [`Giá vàng theo lần ${gia.khaiBao ? 'khai báo' : 'mua/bán'} gần nhất: ${formatMoney(goldPricePerChi(gia))}/chỉ (${formatDay(gia.ngay)})`] : [];
+  return gia ? [`Giá vàng ${GOLD_PRICE_SOURCE[gia.nguon]}: ${formatMoney(goldPricePerChi(gia))}/chỉ (${formatDay(gia.ngay)})`] : [];
 }
 
 // '2026-11-05' → '05/11'
@@ -169,16 +175,34 @@ export function transferStateText(t: ChuyenTienNoiBoRecord, status?: string): st
   return `💸 ${memberName(t.nguoi_chuyen_id)} chuyển ${memberName(t.nguoi_nhan_id).toLowerCase()} ${formatMoney(Number(t.so_tien))} (${formatDay(t.ngay_chuyen)}): ${state}.`;
 }
 
+// Rút quỹ chung đưa thẳng cho người kia (nhom_id khác người ghi)
+export function fundToOther(f: ChuyenQuyChungRecord): boolean {
+  return f.chieu === 'RUT' && f.nhom_id !== f.thanh_vien_id;
+}
+
 export function fundText(f: ChuyenQuyChungRecord, overBalance: boolean): string {
-  const action = f.chieu === 'NOP' ? 'Nộp quỹ chung' : 'Rút quỹ chung';
+  const action = f.chieu === 'NOP' ? 'Nộp quỹ chung' : fundToOther(f) ? `Rút quỹ chung đưa ${memberName(f.nhom_id).toLowerCase()}` : 'Rút quỹ chung';
   const prefix = f.trang_thai === 'DA_HUY' ? '❌ Đã huỷ: ' : '✅ ';
   const warn = overBalance ? '\n⚠️ Số tiền lớn hơn số đang có — kiểm tra lại.' : '';
   return `${prefix}${action} ${formatMoney(Number(f.so_tien))} · ${formatDay(f.ngay_chuyen)}${warn}`;
 }
 
+// "rút quỹ chung 1.000.000đ đưa vợ (05/11)" / "nộp vào quỹ chung 2.000.000đ (05/11)"
+function fundNoticeBody(f: ChuyenQuyChungRecord): string {
+  const money = formatMoney(Number(f.so_tien));
+  if (fundToOther(f)) {
+    return `rút quỹ chung ${money} đưa ${memberName(f.nhom_id).toLowerCase()} (${formatDay(f.ngay_chuyen)})`;
+  }
+  return `${f.chieu === 'NOP' ? 'nộp vào' : 'rút từ'} quỹ chung ${money} (${formatDay(f.ngay_chuyen)})`;
+}
+
 export function fundNoticeText(f: ChuyenQuyChungRecord): string {
-  const action = f.chieu === 'NOP' ? 'nộp vào' : 'rút từ';
-  return `ℹ️ ${memberName(f.thanh_vien_id)} ${action} quỹ chung ${formatMoney(Number(f.so_tien))} (${formatDay(f.ngay_chuyen)}).`;
+  const credited = fundToOther(f) ? ` — đã cộng vào tiền của ${memberName(f.nhom_id).toLowerCase()}` : '';
+  return `ℹ️ ${memberName(f.thanh_vien_id)} ${fundNoticeBody(f)}${credited}.`;
+}
+
+export function fundCancelNoticeText(f: ChuyenQuyChungRecord, nguoiHuy: string): string {
+  return `ℹ️ ${memberName(nguoiHuy)} đã huỷ: ${fundNoticeBody(f)}.`;
 }
 
 // ---------- Số dư (dùng chung /sodu và câu hỏi số dư) ----------
@@ -309,7 +333,8 @@ const IGNORED_TEXT: Record<string, string> = {
   THIEU_HOAC_MO_HO_SO_TIEN: "Chưa rõ số tiền chuyển — nhắn lại, vd 'chuyển vợ 3tr'.",
   DIEU_CHINH_CHUA_HO_TRO_CHAT: 'Điều chỉnh số dư chưa làm được qua chat.',
   CHU_NGU_KHAC_NGUOI_GUI: 'Chỉ ghi được khoản do chính bạn chuyển — người kia tự nhắn nhé.',
-  CHUYEN_TU_QUY_CHUNG: 'Chuyển từ quỹ chung cho người khác chưa hỗ trợ: rút quỹ trước rồi chuyển.',
+  CHUYEN_TU_QUY_CHUNG: "Chưa rõ tiền đi đâu — nhắn 'chuyển vợ 2tr từ quỹ chung' (quỹ → vợ) hoặc 'bỏ vào quỹ chung 2tr'.",
+  CO_NGUOI_NHAN: "Nộp quỹ chung không có người nhận — nhắn 'bỏ vào quỹ chung 2tr'; đưa tiền quỹ cho vợ: 'rút quỹ chung cho vợ 2tr'.",
   TU_CHUYEN_CHO_MINH: 'Không chuyển cho chính mình được.',
   NGAY_TUONG_LAI: 'Ngày trong tương lai — chưa ghi.',
   NGUOI_CHUYEN_KHONG_HOP_LE: 'Tài khoản này không chuyển tiền được.',
@@ -342,7 +367,8 @@ export const HELP_TEXT = [
   '• tiền ăn 50k · lương 20tr · cafe 30k',
   '• chuyển vợ 3tr · bỏ vào quỹ chung 2tr',
   '• bỏ hũ tiết kiệm 5tr · rút hũ tiết kiệm 2tr',
-  '• mua vàng 1 chỉ 14tr · bán vàng 1 chỉ 15tr',
+  '• mua vàng 1 chỉ 14tr · bán vàng 1 chỉ 15tr · /giavang 15tr — giá vàng hôm nay (1 chỉ)',
+  '• chuyển vợ 2tr từ quỹ chung — quỹ chung đưa thẳng cho vợ',
   'Hỏi:',
   '• tháng này vợ chi bao nhiêu · chi tiền học năm nay',
   '• gia đình còn bao nhiêu · chi theo danh mục tháng trước',

@@ -272,7 +272,8 @@ export class TransferService {
           id: newId('QC'),
           chieu: parsed.chieu,
           thanh_vien_id: sender.id,
-          nhom_id: group,
+          // Rút cho người kia: tiền về nhóm người nhận (nhom_id), người ghi vẫn là người gửi
+          nhom_id: parsed.chieu === FUND_DIRECTION.RUT && parsed.nguoi_nhan_id ? parsed.nguoi_nhan_id : group,
           so_tien: parsed.so_tien as number,
           ngay_chuyen: parsed.ngay_chuyen,
           source_message_id: messageId,
@@ -309,7 +310,9 @@ export class TransferService {
       if (!fundMove) {
         throw new DomainError('NOT_FOUND', `Không tìm thấy dòng quỹ chung ${fundMoveId}`);
       }
-      if (fundMove.thanh_vien_id !== nguoiHuyId) {
+      // Rút quỹ đưa thẳng người kia: người nhận cũng huỷ được (không có bước xác nhận)
+      const recipient = fundMove.chieu === FUND_DIRECTION.RUT && fundMove.nhom_id !== fundMove.thanh_vien_id && fundMove.nhom_id === nguoiHuyId;
+      if (fundMove.thanh_vien_id !== nguoiHuyId && !recipient) {
         throw new DomainError('FORBIDDEN', 'Chỉ người ghi được huỷ');
       }
       if ((await markFundMoveCancelled(tx, fundMove.id, nowIso)) === 0) {

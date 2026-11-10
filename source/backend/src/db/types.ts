@@ -208,6 +208,19 @@ export interface HuRecord {
   deleted_at: string | null;
 }
 
+// Giá vàng thị trường nhập bằng /giavang (migration 0006)
+export interface GiaVangRecord {
+  id: string;
+  gia_chi: number;
+  ngay: string;
+  thanh_vien_id: MemberId;
+  idempotency_key: string;
+  created_at: string;
+  updated_at: string;
+  version: number;
+  deleted_at: string | null;
+}
+
 export interface HuTietKiemRecord {
   id: string;
   chieu: SavingsDirection;

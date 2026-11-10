@@ -14,6 +14,7 @@ import type { BotAction } from '../telegram/types.ts';
 import { removeVietnameseDiacritics } from '../parser/normalizer.ts';
 import { parsePeriod } from '../query/period-parser.ts';
 import type { QuerySpec } from '../query/types.ts';
+import { goldPricePerChi, isFarFromPrice, type SavingsSummary } from '../services/savings-service.ts';
 import type { BotContext } from './handler.ts';
 import { periodSummaryText } from './query-replies.ts';
 import { memberChatId, otherMember } from './members.ts';
@@ -30,6 +31,7 @@ import {
   transferReceiverKeyboard,
   transferReceiverText,
   formatGold,
+  goldPriceLine,
   savingsNoticeText,
   savingsText,
 } from './replies.ts';
@@ -78,6 +80,8 @@ export async function runCommand(
       return reply(await createJar(ctx, member, args));
     case 'tietkiemdau':
       return declareSavings(ctx, member, chatId, args, updateId);
+    case 'giavang':
+      return goldMarketPrice(ctx, member, chatId, args, updateId);
     default:
       return reply(`Không có lệnh /${name}.\n${HELP_TEXT}`);
   }
@@ -208,6 +212,66 @@ async function declareSavings(
     actions.push({ type: 'send', chatId: other, text: savingsNoticeText(move, jar) });
   }
   return actions;
+}
+
+const GOLD_PRICE_SYNTAX = 'Cú pháp: /giavang 15tr (giá 1 chỉ) · /giavang 150tr lượng · /giavang (xem giá đang dùng)';
+
+// /giavang [giá 1 chỉ | giá 1 lượng + "lượng"]: giá thị trường hôm nay → định giá vàng trong hũ; không tham số → xem giá
+async function goldMarketPrice(
+  ctx: BotContext,
+  member: ThanhVienRecord,
+  chatId: number,
+  args: string[],
+  updateId: number | undefined,
+): Promise<BotAction[]> {
+  const today = toVnDate(ctx.now());
+  const send = (text: string): BotAction[] => [{ type: 'send', chatId, text }];
+  if (args.length === 0) {
+    const s = await ctx.savings.summary(today);
+    if (!s.gia) {
+      return send(`Chưa có giá vàng.\n${GOLD_PRICE_SYNTAX}`);
+    }
+    return send([...goldPriceLine(s.gia), ...goldHoldingLine(s), GOLD_PRICE_SYNTAX].join('\n'));
+  }
+  const memberId = member.id as MemberId;
+  const words = args.map((a) => a.replace(SYNTAX_BRACKETS, '')).filter(Boolean);
+  const ascii = removeVietnameseDiacritics(words.join(' ').toLowerCase());
+  const perLuong = /\b(?:luong|cay)\b/.test(ascii);
+  const amount = parseMoneyArg(normalizeWhitespace(ascii.replace(/\/?\s*\b(?:1\s+|mot\s+)?(?:luong|cay|chi)\b/g, ' ')), memberId);
+  if (!amount || updateId === undefined) {
+    return send(`Chưa rõ giá.\n${GOLD_PRICE_SYNTAX}`);
+  }
+  const giaChi = perLuong ? Math.round(amount / 10) : amount;
+  const before = await ctx.savings.goldPrice(today);
+  let res;
+  try {
+    res = await ctx.savings.setMarketPrice(member, giaChi, `tg:${updateId}`);
+  } catch (error) {
+    if (error instanceof DomainError && error.code === 'FORBIDDEN') {
+      return send(ignoredText(error.message));
+    }
+    if (error instanceof DomainError && error.code === 'INVALID_INPUT') {
+      return send(`Chưa rõ giá.\n${GOLD_PRICE_SYNTAX}`);
+    }
+    throw error;
+  }
+  const s = await ctx.savings.summary(today);
+  // Lệch xa giá trước đó (quên chữ "lượng", gõ thừa số 0) → nhắc gõ lại; /giavang mới sẽ thay giá này
+  const ref = before && !res.duplicate ? goldPricePerChi(before) : null;
+  const warn =
+    ref !== null && isFarFromPrice(res.price.gia_chi, ref)
+      ? [`⚠️ Lệch xa giá trước đó ${formatMoney(ref)}/chỉ — nhầm thì gõ lại /giavang <giá 1 chỉ> (giá 1 lượng: thêm chữ "lượng").`]
+      : [];
+  const actions = send([`✅ Giá vàng ${formatDay(res.price.ngay)}: ${formatMoney(res.price.gia_chi)}/chỉ`, ...goldHoldingLine(s), ...warn].join('\n'));
+  const other = res.duplicate ? null : await memberChatId(ctx.db, otherMember(memberId));
+  if (other !== null) {
+    actions.push({ type: 'send', chatId: other, text: `ℹ️ ${memberName(memberId)} cập nhật giá vàng: ${formatMoney(res.price.gia_chi)}/chỉ.` });
+  }
+  return actions;
+}
+
+function goldHoldingLine(s: SavingsSummary): string[] {
+  return s.vangPhan !== 0 ? [`Vàng đang có: ${formatGold(s.vangPhan)}${s.vangGiaTri === null ? '' : ` ≈ ${formatMoney(s.vangGiaTri)}`}`] : [];
 }
 
 // "/tietkiemdau 3 chỉ vàng [42tr | 14tr/chỉ] [hũ]" → số phân, tiền (không bắt buộc), tên hũ (ASCII). Không có "vàng" → null.

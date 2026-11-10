@@ -1,5 +1,5 @@
 import type { AssetType, MemberId, SavingsDirection, SavingsSourceId } from '../../config/constants.ts';
-import { toSafeNumber, type DatabaseAdapter, type HuRecord, type HuTietKiemRecord } from '../types.ts';
+import { toSafeNumber, type DatabaseAdapter, type GiaVangRecord, type HuRecord, type HuTietKiemRecord } from '../types.ts';
 
 // ---------- Hũ tiết kiệm (hu_tiet_kiem, migration 0004) ----------
 
@@ -148,6 +148,42 @@ export async function latestGoldPrice(db: DatabaseAdapter, asOf: string): Promis
     [asOf],
   );
   return row ? normalize(row) : null;
+}
+
+// ---------- Giá vàng thị trường (bảng gia_vang, migration 0006) ----------
+
+function normalizeGoldPrice(row: GiaVangRecord): GiaVangRecord {
+  return { ...row, gia_chi: toSafeNumber(row.gia_chi), version: toSafeNumber(row.version) };
+}
+
+export async function insertGoldMarketPrice(
+  db: DatabaseAdapter,
+  input: { id: string; gia_chi: number; ngay: string; thanh_vien_id: MemberId; idempotency_key: string; nowIso: string },
+): Promise<GiaVangRecord> {
+  const version = await db.nextVersion();
+  const row = await db.queryOne<GiaVangRecord>(
+    `INSERT INTO gia_vang (id, gia_chi, ngay, thanh_vien_id, idempotency_key, created_at, updated_at, version)
+     VALUES ($1, $2, $3, $4, $5, $6, $6, $7) RETURNING *`,
+    [input.id, input.gia_chi, input.ngay, input.thanh_vien_id, input.idempotency_key, input.nowIso, version],
+  );
+  if (!row) {
+    throw new Error(`Không đọc lại được giá vàng vừa ghi: ${input.id}`);
+  }
+  return normalizeGoldPrice(row);
+}
+
+export async function getGoldMarketPriceByKey(db: DatabaseAdapter, key: string): Promise<GiaVangRecord | null> {
+  const row = await db.queryOne<GiaVangRecord>('SELECT * FROM gia_vang WHERE idempotency_key = $1', [key]);
+  return row ? normalizeGoldPrice(row) : null;
+}
+
+// Giá thị trường mới nhất đến ngày asOf
+export async function latestGoldMarketPrice(db: DatabaseAdapter, asOf: string): Promise<GiaVangRecord | null> {
+  const row = await db.queryOne<GiaVangRecord>(
+    `SELECT * FROM gia_vang WHERE deleted_at IS NULL AND ngay <= $1 ORDER BY ngay DESC, version DESC LIMIT 1`,
+    [asOf],
+  );
+  return row ? normalizeGoldPrice(row) : null;
 }
 
 // Bỏ vào / lấy ra có tiền trong kỳ (không tính khai báo); huId null = mọi hũ

@@ -287,7 +287,8 @@ for (const backend of BACKENDS) {
       assert.equal(e.transfer.ngay_chuyen, '2026-11-03');
       const f = await sendTransfer(env, MEMBER_ID.CHONG, '02-11 chuyển vợ 1tr');
       assert.equal(f.transfer.ngay_chuyen, '2026-11-02');
-      await expectIgnored(env, MEMBER_ID.CHONG, 'chuyển vợ 2tr từ quỹ chung', 'CHUYEN_TU_QUY_CHUNG');
+      // Từ 10/11: quỹ chung → vợ ghi được (phase5e-fund-to-member.test.ts); "vào quỹ chung" vẫn nhắc
+      await expectIgnored(env, MEMBER_ID.CHONG, 'chuyển vợ 2tr vào quỹ chung', 'CHUYEN_TU_QUY_CHUNG');
       const d = await sendTransfer(env, MEMBER_ID.VO, 'đã ck cho chồng 1tr');
       assert.equal(d.transfer.nguoi_nhan_id, 'CHONG');
       assert.equal(await count(env.db, 'giao_dich'), 0);
@@ -403,7 +404,8 @@ for (const backend of BACKENDS) {
       await expectIgnored(env, 100000009, 'bỏ vào quỹ chung 1tr', 'NGUOI_GUI_KHONG_HOP_LE');
       await expectIgnored(env, MEMBER_ID.VO, 'bỏ quỹ chung 1tr ngày 30/12', 'NGAY_TUONG_LAI');
       await expectIgnored(env, MEMBER_ID.CHONG, 'vợ nộp quỹ chung 2tr', 'CHU_NGU_KHAC_NGUOI_GUI');
-      await expectIgnored(env, MEMBER_ID.CHONG, 'chuyển quỹ chung cho vợ 2tr', 'CO_NGUOI_NHAN');
+      // Từ 10/11 "chuyển quỹ chung cho vợ" là rút quỹ đưa vợ (phase5e); nộp quỹ mà có người nhận vẫn bỏ qua
+      await expectIgnored(env, MEMBER_ID.CHONG, 'bỏ vào quỹ chung cho vợ 2tr', 'CO_NGUOI_NHAN');
       assert.equal(await count(env.db, 'chuyen_quy_chung'), 0);
       const rut = await sendFund(env, MEMBER_ID.CHONG, 'chuyển từ quỹ chung 1tr');
       assert.equal(rut.fundMove.chieu, 'RUT');

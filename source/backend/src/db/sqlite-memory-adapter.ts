@@ -39,6 +39,7 @@ const SCHEMA_STEPS: ReadonlyArray<{ migration: string; seed?: string }> = [
   { migration: '0003_chuyen_quy_chung.sqlite.sql', seed: '0003_seed_cac_con.sql' },
   { migration: '0004_hu_tiet_kiem.sqlite.sql' },
   { migration: '0005_nhieu_hu.sqlite.sql' },
+  { migration: '0006_gia_vang.sqlite.sql' },
 ];
 
 export interface SqliteMemoryOptions {
