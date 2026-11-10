@@ -48,8 +48,10 @@ export interface QuerySpec extends QueryFilterSpec {
   transfer?: TransferQuerySpec;
   // HU_TIET_KIEM: true = bỏ vào / lấy ra trong kỳ; không có = số dư hũ
   savingsFlow?: boolean;
-  // LIET_KE: "chi tiết / tất cả" → mọi khoản trong kỳ (kỳ dài quá 30 ngày → 30 ngày cuối)
+  // LIET_KE: "chi tiết / tất cả" → mọi khoản trong kỳ (kỳ dài quá 31 ngày → 31 ngày cuối)
   fullList?: boolean;
   // HU_TIET_KIEM: tên hũ (ASCII) khi câu hỏi 1 hũ ("quỹ y tế còn bao nhiêu"); null = mọi hũ
   huTen?: string | null;
+  // HU_TIET_KIEM + savingsFlow: chỉ dòng vàng (mua / bán vàng trong kỳ)
+  vang?: boolean;
 }

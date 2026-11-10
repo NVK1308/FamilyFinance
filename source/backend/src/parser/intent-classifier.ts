@@ -8,6 +8,7 @@ import {
 } from '../config/constants.ts';
 import { hasClearAmount } from './amount-parser.ts';
 import { normalizeWhitespace, removeVietnameseDiacritics } from './normalizer.ts';
+import { hasGoldMove } from './gold-detector.ts';
 import { hasSavingsVerb } from './savings-detector.ts';
 import type { ParseContext } from './types.ts';
 
@@ -160,7 +161,7 @@ function checkQuestion(ctx: ParseContext): QuestionCheck {
   }
   const weak = WEAK_QUESTION_MARK.test(text) || WEAK_TONG.test(text) || WEAK_SO_DU.test(text);
   if (!hasAmount) {
-    const moneyMove = TRANSFER_REGEX.test(text) || FUND_VERB.test(text) || hasSavingsVerb(text) || hasDebtWord(ctx.normalizedText, ctx.asciiText);
+    const moneyMove = TRANSFER_REGEX.test(text) || FUND_VERB.test(text) || hasSavingsVerb(text) || hasGoldMove(ctx.normalizedText, text) || hasDebtWord(ctx.normalizedText, ctx.asciiText);
     if (weak || (!moneyMove && (PERIOD_WORD.test(text) || STAT_WORD.test(text)))) {
       return { kind: 'QUERY', hasAmount: false };
     }

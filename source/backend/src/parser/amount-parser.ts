@@ -50,6 +50,12 @@ function parseSingleMatch(match: RegExpExecArray): number | null {
   return null;
 }
 
+// Đọc đúng 1 cụm tiền ("14tr", "14.000.000", "1tr5"); không phải tiền → null
+export function parseAmountToken(token: string): number | null {
+  const m = new RegExp(`^(?:${AMOUNT_TOKEN_REGEX.source})$`, 'i').exec(normalizeWhitespace(token));
+  return m ? parseSingleMatch(m) : null;
+}
+
 // "3 hay 4 triệu", "2 hoặc 3tr": hai số chung 1 đơn vị → mơ hồ (quy tắc hẹp, không đụng câu khác).
 // Số đầu đứng sau tháng/ngày/tuần/năm/lần ("tiền điện tháng 10 hay 500k") thì không tính.
 const ALTERNATIVE_AMOUNT_REGEX =

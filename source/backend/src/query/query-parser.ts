@@ -9,6 +9,7 @@ import {
   type MoneyHolderId,
   type TransferStatus,
 } from '../config/constants.ts';
+import { isGoldQuestion } from '../parser/gold-detector.ts';
 import { findCategoryByKeyword } from '../parser/category-matcher.ts';
 import { hasDebtWord, toMemberId } from '../parser/intent-classifier.ts';
 import { jarWordGate, matchKnownJar } from '../parser/savings-detector.ts';
@@ -281,6 +282,13 @@ export function parseQuery(rawText: string, today: string, jarNames: readonly st
   }
   // Hũ tiết kiệm (tài sản), xét trước "tiết kiệm được" (= thu − chi)
   const jar = savingsJarQuestion(normalized, ascii, jarNames);
+  // Vàng ("vàng còn mấy chỉ", "giá vàng", "có bao nhiêu chỉ vàng") → hũ: số chỉ + giá trị; "tháng này mua vàng bao nhiêu" → vào/ra
+  if (isGoldQuestion(normalized, ascii, jarNames)) {
+    const flow = /\b(?:mua|ban)\b/i.test(ascii) && period !== null && !isRemainQuestion(normalized, ascii);
+    return flow
+      ? { ...spec('HU_TIET_KIEM', 'TONG_QUAN'), savingsFlow: true, vang: true, huTen: jar?.huTen ?? null }
+      : { ...spec('HU_TIET_KIEM', 'TONG_QUAN'), period: period ?? todayPeriod(today), huTen: jar?.huTen ?? null };
+  }
   if (jar?.kind === 'BALANCE') {
     return { ...spec('HU_TIET_KIEM', 'TONG_QUAN'), period: period ?? todayPeriod(today), huTen: jar.huTen };
   }

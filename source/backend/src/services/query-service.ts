@@ -22,7 +22,7 @@ import { addDaysToIsoDate } from '../parser/date-parser.ts';
 import type { Period } from '../query/period-parser.ts';
 import type { QuerySpec } from '../query/types.ts';
 import { BalanceService, type HolderBalancesResult } from './balance-service.ts';
-import { SavingsService } from './savings-service.ts';
+import { SavingsService, goldValue, type SavingsSummary } from './savings-service.ts';
 import type { ServiceOptions } from './common.ts';
 
 // Chi = CHI + PHI + LAI_VAY; Thu = THU (Runbook 4.1). VAY/TRA_NO/DIEU_CHINH, chuyển nội bộ, quỹ không tính.
@@ -68,18 +68,18 @@ export type QueryAnswer =
       chiTuQuyChung: number | null;
       topDanhMuc: GroupTotal[];
     }
-  | { kind: 'SO_DU'; spec: QuerySpec; asOf: string; balances: HolderBalancesResult; dangChoChuyen: Sum | null; hu: number }
+  // hu: mọi hũ (tiền + vàng) khi hỏi số dư chung; null khi hỏi 1 người giữ
+  | { kind: 'SO_DU'; spec: QuerySpec; asOf: string; balances: HolderBalancesResult; dangChoChuyen: Sum | null; hu: SavingsSummary | null }
   | {
       kind: 'HU_TIET_KIEM';
       spec: QuerySpec;
       asOf: string;
       // Hũ được hỏi; null = mọi hũ
       jar: HuRecord | null;
-      tien: number;
+      // Tiền + vàng của hũ được hỏi (rows 1 dòng) hoặc mọi hũ
+      summary: SavingsSummary;
       // Hỏi dòng tiền trong kỳ (savingsFlow)
       flows: { nop: number; soNop: number; rut: number; soRut: number } | null;
-      // Hỏi số dư mọi hũ → từng hũ
-      jars: Array<{ jar: HuRecord; tien: number }> | null;
     }
   | { kind: 'THEO_DANH_MUC' | 'THEO_DOI_TUONG'; spec: QuerySpec; tong: Sum; nhom: GroupTotal[] }
   | { kind: 'AI_NHIEU_NHAT'; spec: QuerySpec; tong: Sum; nhom: GroupTotal[] }
@@ -92,7 +92,7 @@ export type QueryAnswer =
       chi: number;
       count: number;
       rows: TxRow[];
-      // Liệt kê đủ: khoảng ngày thật sự hiện; capped = kỳ hỏi dài hơn 30 ngày nên đã cắt
+      // Liệt kê đủ: khoảng ngày thật sự hiện; capped = kỳ hỏi dài hơn 31 ngày nên đã cắt
       shown: { period: Period; capped: boolean } | null;
     }
   | { kind: 'SO_SANH'; spec: QuerySpec; ky: [PeriodTotals, PeriodTotals] }
@@ -131,24 +131,24 @@ export class QueryService {
         const dangChoChuyen =
           asOf === today && (holder === null || member !== null) ? await sumPendingTransfers(this.db, member) : null;
         // Hỏi số dư chung → kèm hũ tiết kiệm (tài sản chung)
-        const hu = holder === null ? (await this.balances.getSavingsJar(asOf)).tien : 0;
+        const hu = holder === null ? await this.savings.summary(asOf) : null;
         return { kind: 'SO_DU', spec, asOf, balances, dangChoChuyen, hu };
       }
       case 'HU_TIET_KIEM': {
         const asOf = spec.period.to < today ? spec.period.to : today;
         // 1 hũ ("quỹ y tế còn bao nhiêu") hoặc mọi hũ
         const jar = spec.huTen ? await getJarByNormalizedName(this.db, spec.huTen) : null;
-        if (!jar && !spec.savingsFlow) {
-          // Số dư mọi hũ: từng hũ + tổng (cùng hàm với /tietkiem)
-          const jars = await this.savings.listJarBalances(asOf);
-          return { kind: 'HU_TIET_KIEM', spec, asOf, jar, tien: jars.reduce((s, r) => s + r.tien, 0), flows: null, jars };
-        }
-        const huId = jar?.id ?? null;
-        const [flows, cash] = await Promise.all([
-          spec.savingsFlow ? sumSavingsFlows(this.db, spec.period.from, spec.period.to, huId) : null,
-          sumSavingsCash(this.db, asOf, huId),
+        const [all, flows] = await Promise.all([
+          this.savings.summary(asOf),
+          spec.savingsFlow ? sumSavingsFlows(this.db, spec.period.from, spec.period.to, jar?.id ?? null, spec.vang ? 'VANG' : null) : null,
         ]);
-        return { kind: 'HU_TIET_KIEM', spec, asOf, jar, tien: cash.tien, flows, jars: null };
+        if (!jar) {
+          return { kind: 'HU_TIET_KIEM', spec, asOf, jar, summary: all, flows };
+        }
+        // Hũ đã ẩn không có trong danh sách hũ đang dùng → chỉ tính tiền
+        const row = all.rows.find((r) => r.jar.id === jar.id) ?? { jar, tien: (await sumSavingsCash(this.db, asOf, jar.id)).tien, vangPhan: 0 };
+        const summary = { rows: [row], gia: all.gia, tien: row.tien, vangPhan: row.vangPhan, vangGiaTri: goldValue(row.vangPhan, all.gia) };
+        return { kind: 'HU_TIET_KIEM', spec, asOf, jar, summary, flows };
       }
       case 'THEO_DANH_MUC':
       case 'THEO_DOI_TUONG': {

@@ -43,7 +43,7 @@ for (const backend of BACKENDS) {
       h = createHarness(env.db);
       await seedInitial(env);
       h.setNow('2026-09-05T03:00:00.000Z');
-      await h.text(VO, 'tiền ăn 111k'); // ngoài 30 ngày cuối kỳ "từ 1/9 đến 5/11"
+      await h.text(VO, 'tiền ăn 111k'); // ngoài 31 ngày cuối kỳ "từ 1/9 đến 5/11"
       h.setNow('2026-10-20T03:00:00.000Z');
       await h.text(VO, 'tiền ăn 999k'); // tháng trước
       h.setNow('2026-11-03T03:00:00.000Z');
@@ -88,7 +88,7 @@ for (const backend of BACKENDS) {
       assert.doesNotMatch(vo, /Chồng/);
     });
 
-    it('kỳ dài hơn 30 ngày → 30 ngày cuối kỳ (trong kỳ đã chọn) + chỉ phần còn lại', async () => {
+    it('kỳ dài hơn 31 ngày → 31 ngày cuối kỳ (trong kỳ đã chọn) + chỉ phần còn lại', async () => {
       const text = (await ask(VO, 'liệt kê chi tiết chi từ 1/9 đến 5/11'))[0]!;
       assert.match(text, /^📋 Chi · 06\/10–05\/11: 1\.679\.000đ · 5 khoản/);
       assert.match(text, /• 20\/10: 999\.000đ/);
@@ -104,7 +104,7 @@ for (const backend of BACKENDS) {
       assert.doesNotMatch((await ask(VO, 'liệt kê chi tiết chi tháng 10'))[0]!, /Kỳ dài hơn/);
       // Hỏi số tiền có "tất cả" vẫn là tổng
       assert.match((await ask(VO, 'tháng này chi tất cả bao nhiêu'))[0]!, /^📊 Chi · /);
-      // Kỳ đã qua: 30 ngày cuối của chính kỳ đó, không tính theo hôm nay
+      // Kỳ đã qua: 31 ngày cuối của chính kỳ đó, không tính theo hôm nay
       const sep = (await ask(VO, 'liệt kê chi tiết chi từ 1/8 đến 30/9'))[0]!;
       assert.match(sep, /^📋 Chi · 31\/08–30\/09: 111\.000đ · 1 khoản/);
     });

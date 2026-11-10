@@ -1,4 +1,5 @@
 import type {
+  AssetType,
   BeneficiaryId,
   CategoryCode,
   ConfirmationType,
@@ -73,10 +74,13 @@ export interface ParsedFundTransferResult {
   mo_ta: string;
 }
 
-// Hũ tiết kiệm (Phase 5c-1: chỉ tiền)
+// Hũ tiết kiệm: tiền (5c-1) hoặc vàng (5c-2)
 export interface ParsedSavingsResult {
   intent: typeof MESSAGE_INTENT_SAVINGS;
   chieu: SavingsDirection;
+  loai_tai_san: AssetType;
+  // Vàng: số phân (1 chỉ = 10 phân); null với tiền / vàng thiếu số lượng
+  so_luong_phan: number | null;
   thanh_vien_id: MemberId;
   // Nguồn / đích tiền mặt; null khi khai báo
   nguon_id: SavingsSourceId | null;

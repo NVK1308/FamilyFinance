@@ -7,7 +7,8 @@ import {
 } from '../db/repositories/index.ts';
 import type { ThanhVienRecord } from '../db/types.ts';
 import { extractAmountVnd } from '../parser/amount-parser.ts';
-import { createParseContext } from '../parser/normalizer.ts';
+import { amountFromUnitPrice, hasGoldWord, scanGoldQuantity } from '../parser/gold-detector.ts';
+import { createParseContext, normalizeWhitespace } from '../parser/normalizer.ts';
 import { DomainError, toVnDate } from '../services/common.ts';
 import type { BotAction } from '../telegram/types.ts';
 import { removeVietnameseDiacritics } from '../parser/normalizer.ts';
@@ -28,6 +29,7 @@ import {
   memberName,
   transferReceiverKeyboard,
   transferReceiverText,
+  formatGold,
   savingsNoticeText,
   savingsText,
 } from './replies.ts';
@@ -87,29 +89,31 @@ async function balanceText(ctx: BotContext): Promise<string> {
   if (res.status !== 'OK') {
     return NEED_INITIAL;
   }
-  const hu = (await ctx.savings.getJar(today)).tien;
-  return balanceSummaryLines(res.nhom, res.tong, today, hu).join('\n');
+  return balanceSummaryLines(res.nhom, res.tong, today, await ctx.savings.summary(today)).join('\n');
 }
 
 const SAVINGS_LABEL: Record<string, string> = { KHAI_BAO: 'Khai báo', NOP: 'Bỏ vào', RUT: 'Lấy ra' };
+const GOLD_LABEL: Record<string, string> = { KHAI_BAO: 'Khai báo vàng', NOP: 'Mua vàng', RUT: 'Bán vàng' };
 const SAVINGS_RECENT = 5;
 const SAVINGS_SYNTAX = [
   'Tạo hũ: /taohu Mua nhà 2 tỷ (mục tiêu không bắt buộc)',
-  'Khai báo tiền đang để dành (không trừ ai): /tietkiemdau 50tr mua nhà',
+  'Khai báo tiền / vàng đang để dành (không trừ ai): /tietkiemdau 50tr mua nhà · /tietkiemdau 3 chỉ vàng 42tr',
   'Bỏ / lấy: nhắn "bỏ hũ mua nhà 5tr", "rút quỹ y tế 2tr", "khám bệnh 500k lấy từ quỹ y tế"',
+  'Vàng: nhắn "mua vàng 1 chỉ 14tr", "mua vàng 2 chỉ 14tr/chỉ bỏ hũ mua nhà", "bán vàng 1 chỉ 15tr"',
 ].join('\n');
 
 async function savingsJarText(ctx: BotContext): Promise<string> {
   const today = toVnDate(ctx.now());
-  const rows = await ctx.savings.listJarBalances(today);
-  const names = new Map(rows.map((r) => [r.jar.id, r.jar.ten]));
+  const summary = await ctx.savings.summary(today);
+  const names = new Map(summary.rows.map((r) => [r.jar.id, r.jar.ten]));
   const recent = (await ctx.savings.listRecent(SAVINGS_RECENT)).map((h) => {
     const who = h.nguon_id === null ? '' : h.nguon_id === 'QUY_CHUNG' ? ', quỹ chung' : `, ${memberName(h.nguon_id).toLowerCase()}`;
     // Dòng lấy ra đi kèm khoản chi → "Chi từ hũ"
-    const label = h.giao_dich_id ? 'Chi từ hũ' : SAVINGS_LABEL[h.chieu];
-    return `• ${formatDay(h.ngay)} ${label} ${formatMoney(Number(h.so_tien ?? 0))} (${names.get(h.hu_id ?? DEFAULT_JAR_ID) ?? '?'}${who})`;
+    const label = h.giao_dich_id ? 'Chi từ hũ' : h.loai_tai_san === 'VANG' ? `${GOLD_LABEL[h.chieu]} ${formatGold(Number(h.so_luong_phan))}` : SAVINGS_LABEL[h.chieu];
+    const amount = h.so_tien === null ? '' : ` ${formatMoney(Number(h.so_tien))}`;
+    return `• ${formatDay(h.ngay)} ${label}${amount} (${names.get(h.hu_id ?? DEFAULT_JAR_ID) ?? '?'}${who})`;
   });
-  return [...jarListLines(rows, today), ...(recent.length ? ['Gần đây:', ...recent] : []), '', SAVINGS_SYNTAX].join('\n');
+  return [...jarListLines(summary, today), ...(recent.length ? ['Gần đây:', ...recent] : []), '', SAVINGS_SYNTAX].join('\n');
 }
 
 // "/taohu Mua nhà 2 tỷ" → tên + mục tiêu (1–2 chữ cuối là số tiền)
@@ -166,6 +170,10 @@ async function declareSavings(
   const memberId = member.id as MemberId;
   // /tietkiemdau 50tr [tên hũ] — số tiền là 1–2 chữ đầu ("2 tỷ", "50 triệu"); bỏ dấu <>[] nếu gõ theo cú pháp mẫu
   args = args.map((a) => a.replace(SYNTAX_BRACKETS, '')).filter(Boolean);
+  const gold = goldDeclareArgs(args.join(' '), memberId, await ctx.savings.jarNames());
+  if (gold && 'error' in gold) {
+    return [{ type: 'send', chatId, text: `${gold.error}\n${SAVINGS_SYNTAX}` }];
+  }
   let amount: number | null = null;
   let nameFrom = 1;
   for (const n of [2, 1]) {
@@ -176,12 +184,15 @@ async function declareSavings(
       break;
     }
   }
-  if (!amount || updateId === undefined) {
+  if ((!gold && !amount) || updateId === undefined) {
     return [{ type: 'send', chatId, text: `Chưa rõ số tiền.\n${SAVINGS_SYNTAX}` }];
   }
   let res;
   try {
-    res = await ctx.savings.declare(member, amount, `tg:${updateId}`, args.slice(nameFrom).join(' ') || null);
+    const key = `tg:${updateId}`;
+    res = gold
+      ? await ctx.savings.declareGold(member, gold.phan, gold.soTien, key, gold.name)
+      : await ctx.savings.declare(member, amount as number, key, args.slice(nameFrom).join(' ') || null);
   } catch (error) {
     if (error instanceof DomainError && (error.code === 'FORBIDDEN' || error.code === 'NOT_FOUND')) {
       return [{ type: 'send', chatId, text: ignoredText(error.message) }];
@@ -197,6 +208,34 @@ async function declareSavings(
     actions.push({ type: 'send', chatId: other, text: savingsNoticeText(move, jar) });
   }
   return actions;
+}
+
+// "/tietkiemdau 3 chỉ vàng [42tr | 14tr/chỉ] [hũ]" → số phân, tiền (không bắt buộc), tên hũ (ASCII). Không có "vàng" → null.
+function goldDeclareArgs(
+  text: string,
+  memberId: MemberId,
+  jarNames: readonly string[],
+): { phan: number; soTien: number | null; name: string | null } | { error: string } | null {
+  const p = createParseContext(text, { senderId: memberId });
+  // "/tietkiemdau 50tr vàng cưới" — tên hũ có chữ "vàng" → khai báo tiền
+  const withoutJar = jarNames
+    .filter((n) => /\bvang\b/.test(n))
+    .reduce((t, n) => t.replace(new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`), ' '), p.asciiText);
+  if (!hasGoldWord(p.normalizedText, withoutJar)) {
+    return null;
+  }
+  const scan = scanGoldQuantity(p.asciiText);
+  if (scan.phan === null || scan.reason) {
+    return { error: 'Chưa rõ số lượng vàng (chỉ / phân / lượng).' };
+  }
+  const rest = { ...p, workingAsciiText: scan.rest };
+  const amount = extractAmountVnd(rest);
+  if (amount.isAmbiguous || (amount.amount !== null && scan.donGia !== null)) {
+    return { error: 'Số tiền chưa rõ — ghi tổng tiền hoặc giá 1 chỉ.' };
+  }
+  const soTien = scan.donGia !== null ? amountFromUnitPrice(scan.donGia, scan.phan) : amount.amount;
+  const name = normalizeWhitespace(rest.workingAsciiText.replace(/\b(?:vang|nhan\s+tron|gia|hu|quy)\b/gi, ' '));
+  return { phan: scan.phan, soTien, name: name || null };
 }
 
 // /tuan, /thang [trước] [vợ|chồng]: thu, chi, chênh lệch, danh mục chi lớn, theo người — dùng lại QueryService

@@ -111,8 +111,21 @@
 - `/tuan`, `/thang` [trước | 10 | 10/2025] [vợ | chồng] → 1 tin tổng hợp (dùng lại QueryService). `/thang` cũ thay bằng bản tổng hợp.
 - Kèm các sửa sau sự cố bảng `hu` trên Neon: tin thường không lỗi khi bảng hũ lỗi, `/taohu` bỏ dấu `<>[]`, cảnh báo đầu file migration SQLite, deploy bước 5 kiểm kiểu bảng `hu` (`temp/neon/07_sua_bang_hu.sql`).
 
+### ✅ Phase 5c-2 — Vàng trong hũ (CODE XONG 10/11, 294/294 test, typecheck sạch; CHƯA COMMIT, CHƯA DEPLOY; không cần SQL Neon)
+- Plan v1 + review vòng 1 + v2 (mục 9): `E:\QuangIch\AIWorkspace\sessions\FamilyFinance\2026-11-10_vang-5c-2\`. Người dùng chốt V1–V4 theo đề xuất.
+- Không migration: dùng cột sẵn có của `hu_tiet_kiem` (`loai_tai_san = 'VANG'`, `so_luong_phan` = số **phân**: 1 chỉ = 10 phân, 1 lượng = 1 cây = 100 phân).
+- Parser `src/parser/gold-detector.ts`, chạy **trước** hũ tiền / quỹ chung / chi trả từ hũ:
+  - `mua vàng 1 chỉ 14tr` → NOP (trừ tiền người nhắn / quỹ chung); `bán vàng 1 chỉ 15tr [bỏ / về quỹ chung]` → RUT (tiền về người bán); `khai báo vàng 3 chỉ [giá]`, `bỏ / cất 2 chỉ vàng vào hũ X` → KHAI_BAO (không trừ ai). Không ghi Thu/Chi, không lãi/lỗ.
+  - Số lượng: `0,5 chỉ`, `nửa chỉ`, `1 chỉ rưỡi`, `1 chỉ 5 phân`, `1 lượng 2 chỉ`, `1 cây`; lẻ hơn phân → nhắc. Đơn giá: `14tr/chỉ`, `mỗi chỉ 14tr`, `giá 14tr 1 chỉ` (khi còn số lượng khác).
+  - Câu có "vàng" + số lượng nhưng là trang sức / quà / có tiền tố loại → vẫn bỏ cụm số lượng trước khi khớp danh mục ("1 lượng" không còn thành Thu Lương).
+  - Nhắc, không ghi: thiếu số lượng, tiền mơ hồ / số trần, bán không có tiền, `rút hũ … mua vàng` (đổi tiền hũ sang vàng — để sau), vàng ở nhiều hũ mà không nêu hũ.
+- Định giá (Q1 c): giá trị = số phân × giá của dòng vàng có giá gần nhất (ưu tiên mua / bán; giá khai báo chỉ khi chưa có mua / bán). Đơn giá lệch > 30% giá đang dùng → cảnh báo gõ nhầm. Chưa có giá → "chưa định giá", không cộng vào tổng.
+- Hiển thị: `/tietkiem`, `/sodu`, câu hỏi hũ / vàng (QUERY_RULES mục 3). `/tietkiemdau 3 chỉ vàng [42tr | 14tr/chỉ] [hũ]`. Không đặt được tên hũ "vàng".
+- Test: [phase5c-gold.test.ts](file:///F:/FamilyFinance/source/backend/tests/phase5c-gold.test.ts). Code review high: 10 điểm, đã sửa hết.
+
 ## 3. Công Việc Tiếp Theo
 
 - **Deploy 5b + 5c-1 (nhiều hũ)**: Neon chạy lần lượt `temp/neon/04_them_cac_con.sql` → `05_hu_tiet_kiem.sql` → `06_nhieu_hu.sql` (file nào đã chạy thì bỏ qua; chạy lại cũng không sao), sau đó `deploy.ps1 -From 3 -To 4 -Yes`. Thử câu hỏi thật, câu sai → bổ sung luật (xem tin `CAU_HOI_CHUA_HIEU`).
-- **Phase 5c-2**: vàng (mua / bán / khai báo theo chỉ – phân – lượng, đơn giá "/chỉ", định giá theo giá gần nhất).
+- **Sau 5c-2 (để sau)**: đổi tiền trong hũ ↔ vàng (2 dòng liên kết), `/giavang` cập nhật giá thị trường, quản lý hũ (đổi tên / ẩn / sửa mục tiêu), khoản "mua vàng" đã ghi Chi trước 5c-2 không tự chuyển.
+- **Phase 6**: báo cáo thống kê dạng file.
 - Dồn lại: version seed (Phase 7), khoá kỳ đã chốt (Phase 8), test kết nối Neon WS thật (Phase 10).

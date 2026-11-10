@@ -231,7 +231,7 @@ async function outcomeActions(
     }
     case 'SAVINGS_MOVE': {
       const h = outcome.move;
-      const actions: BotAction[] = [send(savingsText(h, outcome.jar, outcome.canhBaoVuotSoDu), h.trang_thai === 'HOAN_TAT' ? cancelButton('hk', h.id) : undefined)];
+      const actions: BotAction[] = [send(savingsText(h, outcome.jar, outcome.canhBaoVuotSoDu, outcome.giaVangThamChieu ?? null), h.trang_thai === 'HOAN_TAT' ? cancelButton('hk', h.id) : undefined)];
       const other = outcome.duplicate ? null : await memberChatId(ctx.db, otherMember(h.thanh_vien_id));
       if (other !== null) {
         actions.push({ type: 'send', chatId: other, text: savingsNoticeText(h, outcome.jar) });

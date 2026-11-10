@@ -126,21 +126,48 @@ export async function sumSavingsCashByJar(db: DatabaseAdapter, asOf: string): Pr
   return new Map(rows.map((r) => [r.hu_id, toSafeNumber(r.tien)]));
 }
 
+// Vàng từng hũ đến ngày asOf (số phân): khai báo + mua − bán
+export async function sumGoldByJar(db: DatabaseAdapter, asOf: string): Promise<Map<string, number>> {
+  const rows = await db.query<{ hu_id: string; phan: unknown }>(
+    `SELECT COALESCE(h.hu_id, 'TIET_KIEM') AS hu_id,
+       COALESCE(SUM(CASE WHEN h.chieu = 'RUT' THEN -h.so_luong_phan ELSE h.so_luong_phan END), 0) AS phan
+     FROM hu_tiet_kiem h
+     WHERE h.trang_thai = 'HOAN_TAT' AND h.deleted_at IS NULL AND h.loai_tai_san = 'VANG' AND h.ngay <= $1
+     GROUP BY COALESCE(h.hu_id, 'TIET_KIEM')`,
+    [asOf],
+  );
+  return new Map(rows.map((r) => [r.hu_id, toSafeNumber(r.phan)]));
+}
+
+// Dòng vàng có giá gần nhất đến ngày asOf (định giá, giá chung mọi hũ): ưu tiên mua/bán; khai báo chỉ khi chưa có mua/bán
+export async function latestGoldPrice(db: DatabaseAdapter, asOf: string): Promise<HuTietKiemRecord | null> {
+  const row = await db.queryOne<HuTietKiemRecord>(
+    `SELECT * FROM hu_tiet_kiem
+     WHERE trang_thai = 'HOAN_TAT' AND deleted_at IS NULL AND loai_tai_san = 'VANG' AND so_tien IS NOT NULL AND ngay <= $1
+     ORDER BY CASE WHEN chieu = 'KHAI_BAO' THEN 1 ELSE 0 END, ngay DESC, created_at DESC, version DESC LIMIT 1`,
+    [asOf],
+  );
+  return row ? normalize(row) : null;
+}
+
 // Bỏ vào / lấy ra có tiền trong kỳ (không tính khai báo); huId null = mọi hũ
 export async function sumSavingsFlows(
   db: DatabaseAdapter,
   from: string,
   to: string,
   huId: string | null = null,
+  loai: AssetType | null = null,
 ): Promise<{ nop: number; soNop: number; rut: number; soRut: number }> {
   const byJar = huId ? ` AND COALESCE(h.hu_id, 'TIET_KIEM') = $3` : '';
+  // Hằng số trong code (không phải dữ liệu người dùng)
+  const byAsset = loai === 'VANG' ? ` AND h.loai_tai_san = 'VANG'` : loai === 'TIEN' ? ` AND h.loai_tai_san = 'TIEN'` : '';
   const row = await db.queryOne<{ nop: unknown; so_nop: unknown; rut: unknown; so_rut: unknown }>(
     `SELECT
        COALESCE(SUM(CASE WHEN h.chieu = 'NOP' THEN h.so_tien ELSE 0 END), 0) AS nop,
        COALESCE(SUM(CASE WHEN h.chieu = 'NOP' THEN 1 ELSE 0 END), 0) AS so_nop,
        COALESCE(SUM(CASE WHEN h.chieu = 'RUT' THEN h.so_tien ELSE 0 END), 0) AS rut,
        COALESCE(SUM(CASE WHEN h.chieu = 'RUT' THEN 1 ELSE 0 END), 0) AS so_rut
-     FROM hu_tiet_kiem h WHERE ${CASH_MOVES}${byJar}`,
+     FROM hu_tiet_kiem h WHERE ${CASH_MOVES}${byJar}${byAsset}`,
     huId ? [from, to, huId] : [from, to],
   );
   return {
@@ -155,7 +182,7 @@ export async function sumSavingsFlows(
 export async function listRecentSavingsMoves(db: DatabaseAdapter, limit: number): Promise<HuTietKiemRecord[]> {
   const rows = await db.query<HuTietKiemRecord>(
     `SELECT * FROM hu_tiet_kiem WHERE trang_thai = 'HOAN_TAT' AND deleted_at IS NULL
-     ORDER BY ngay DESC, created_at DESC, id DESC LIMIT $1`,
+     ORDER BY ngay DESC, created_at DESC, version DESC LIMIT $1`,
     [limit],
   );
   return rows.map(normalize);

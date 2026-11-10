@@ -3,7 +3,7 @@ import { ALL_TIME_FROM, type Period } from '../query/period-parser.ts';
 import type { QuerySpec } from '../query/types.ts';
 import { FULL_LIST_DAYS, FULL_LIST_LIMIT, MAX_GROUPS, type QueryAnswer, type Sum } from '../services/query-service.ts';
 import { addDaysToIsoDate } from '../parser/date-parser.ts';
-import { balanceSummaryLines, formatDay, formatMoney, holderName, jarListLines, memberName } from './replies.ts';
+import { assetText, balanceSummaryLines, formatDay, formatMoney, goldPriceLine, holderName, jarListLines, memberName } from './replies.ts';
 
 const TYPE_NAME: Record<string, string> = { LAI_VAY: 'Lãi vay', PHI: 'Phí' };
 
@@ -116,7 +116,7 @@ function balanceLines(a: Extract<QueryAnswer, { kind: 'SO_DU' }>): string[] {
   const holder = a.spec.holder;
   const lines = holder
     ? [`💰 ${holderName(holder)} đến ${formatDay(a.asOf)}: ${formatMoney(b.nhom[holder])}`]
-    : balanceSummaryLines(b.nhom, b.tong, a.asOf, a.hu);
+    : balanceSummaryLines(b.nhom, b.tong, a.asOf, a.hu ?? { tien: 0, vangPhan: 0, vangGiaTri: null });
   if (a.dangChoChuyen && a.dangChoChuyen.count > 0) {
     lines.push(`⏳ Đang chờ xác nhận chuyển: ${formatMoney(a.dangChoChuyen.total)} (${a.dangChoChuyen.count} khoản) — chưa tính vào số dư.`);
   }
@@ -395,16 +395,22 @@ export function queryAnswerText(a: QueryAnswer, coSoTien: boolean, today: string
       break;
     case 'HU_TIET_KIEM': {
       const name = a.jar ? `Hũ ${a.jar.ten}` : 'Các hũ';
+      const s = a.summary;
+      const have = assetText(s.tien, s.vangPhan, s.vangGiaTri);
+      const price = goldPriceLine(s.vangPhan !== 0 ? s.gia : null);
       if (a.flows) {
+        // Bỏ vào / lấy ra tính theo tiền (gồm tiền mua / bán vàng); hỏi vàng → chỉ mua / bán vàng
+        const [inWord, outWord] = a.spec.vang ? ['mua vàng', 'bán vàng'] : ['bỏ vào', 'lấy ra'];
         lines = [
-          `🏺 ${name} · ${periodText(a.spec.period)}: bỏ vào ${formatMoney(a.flows.nop)} (${a.flows.soNop} lần) · lấy ra ${formatMoney(a.flows.rut)} (${a.flows.soRut} lần)`,
-          `Hiện có (đến ${formatDay(a.asOf)}): ${formatMoney(a.tien)}`,
+          `🏺 ${name} · ${periodText(a.spec.period)}: ${inWord} ${formatMoney(a.flows.nop)} (${a.flows.soNop} lần) · ${outWord} ${formatMoney(a.flows.rut)} (${a.flows.soRut} lần)`,
+          `Hiện có (đến ${formatDay(a.asOf)}): ${have}`,
+          ...price,
         ];
-      } else if (a.jars) {
-        lines = [...jarListLines(a.jars, a.asOf), 'Chi tiết: /tietkiem'];
+      } else if (!a.jar) {
+        lines = [...jarListLines(s, a.asOf), 'Chi tiết: /tietkiem'];
       } else {
-        const goal = a.jar?.muc_tieu ? ` / ${formatMoney(a.jar.muc_tieu)}` : '';
-        lines = [`🏺 ${name} đến ${formatDay(a.asOf)}: ${formatMoney(a.tien)}${goal}`, 'Chi tiết: /tietkiem'];
+        const goal = a.jar.muc_tieu ? ` / ${formatMoney(a.jar.muc_tieu)}` : '';
+        lines = [`🏺 ${name} đến ${formatDay(a.asOf)}: ${have}${goal}`, ...price, 'Chi tiết: /tietkiem'];
       }
       break;
     }

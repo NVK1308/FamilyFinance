@@ -1,6 +1,7 @@
 import {
   CONFIRMATION_TYPE,
   MESSAGE_INTENT,
+  ASSET_TYPE,
   SAVINGS_DIRECTION,
   TRANSACTION_TYPE,
   TRANSFER_STATUS,
@@ -11,6 +12,7 @@ import { extractAmountVnd } from './amount-parser.ts';
 import { matchCategoryAndType } from './category-matcher.ts';
 import { extractTransactionDate } from './date-parser.ts';
 import { detectFundTransfer } from './fund-detector.ts';
+import { parseGold } from './gold-detector.ts';
 import { classifyIntent } from './intent-classifier.ts';
 import { createParseContext } from './normalizer.ts';
 import { resolveRoles } from './role-resolver.ts';
@@ -99,6 +101,11 @@ export function parseVietnameseFinanceMessage(
   }
 
   // 3. Xử lý ghi nhận giao dịch (THU / CHI / VAY / TRA_NO...)
+  // 3-. Vàng trong hũ: trước hũ tiền / quỹ chung / chi trả từ hũ; câu khác có "vàng" + số lượng → bỏ số lượng
+  const gold = parseGold(ctx, options, classification.explicitTransactionType === null);
+  if (gold) {
+    return gold;
+  }
   const transactionDate = extractTransactionDate(ctx);
   const amountResult = extractAmountVnd(ctx);
 
@@ -109,6 +116,8 @@ export function parseVietnameseFinanceMessage(
       return {
         intent: MESSAGE_INTENT.SAVINGS_MOVE,
         chieu: savings.chieu,
+        loai_tai_san: ASSET_TYPE.TIEN,
+        so_luong_phan: null,
         thanh_vien_id: ctx.senderId,
         nguon_id: savings.chieu === SAVINGS_DIRECTION.KHAI_BAO ? null : (savings.nguon ?? ctx.senderId),
         ten_hu: savings.tenHu,

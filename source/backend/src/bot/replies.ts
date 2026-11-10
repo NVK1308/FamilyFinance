@@ -1,5 +1,6 @@
 import type { MemberId, MoneyHolderId, TransactionType } from '../config/constants.ts';
 import type { ChuyenQuyChungRecord, ChuyenTienNoiBoRecord, DanhMucRecord, GiaoDichRecord, HuRecord, HuTietKiemRecord } from '../db/types.ts';
+import { goldPricePerChi, goldValue, pricePerChi, type GoldPrice, type SavingsSummary } from '../services/savings-service.ts';
 import type { InlineKeyboard } from '../telegram/types.ts';
 import { categoryCodeFits, encodeCallback } from './callback-data.ts';
 
@@ -8,6 +9,25 @@ import { categoryCodeFits, encodeCallback } from './callback-data.ts';
 export function formatMoney(amount: number): string {
   const sign = amount < 0 ? '-' : '';
   return `${sign}${String(Math.abs(Math.round(amount))).replace(/\B(?=(\d{3})+(?!\d))/g, '.')}đ`;
+}
+
+// Vàng: 5 phân → "0,5 chỉ"; 120 phân → "12 chỉ (1,2 lượng)"
+export function formatGold(phan: number): string {
+  const num = (v: number): string => String(Number(v.toFixed(2))).replace('.', ',');
+  const chi = `${num(phan / 10)} chỉ`;
+  return Math.abs(phan) >= 100 ? `${chi} (${num(phan / 100)} lượng)` : chi;
+}
+
+// Tiền + vàng: "5.000.000đ + vàng 2 chỉ (≈ 28.000.000đ)"
+export function assetText(tien: number, vangPhan: number, vangGiaTri: number | null): string {
+  if (vangPhan === 0) {
+    return formatMoney(tien);
+  }
+  return `${formatMoney(tien)} + vàng ${formatGold(vangPhan)} (${vangGiaTri === null ? 'chưa định giá' : `≈ ${formatMoney(vangGiaTri)}`})`;
+}
+
+export function goldPriceLine(gia: GoldPrice | null): string[] {
+  return gia ? [`Giá vàng theo lần ${gia.khaiBao ? 'khai báo' : 'mua/bán'} gần nhất: ${formatMoney(goldPricePerChi(gia))}/chỉ (${formatDay(gia.ngay)})`] : [];
 }
 
 // '2026-11-05' → '05/11'
@@ -163,21 +183,27 @@ export function fundNoticeText(f: ChuyenQuyChungRecord): string {
 
 // ---------- Số dư (dùng chung /sodu và câu hỏi số dư) ----------
 
-// Từng nhóm tiền mặt + tổng; hũ ≠ 0 thì thêm dòng hũ và tổng tài sản (ước tính)
-export function balanceSummaryLines(nhom: Record<MoneyHolderId, number>, tong: number, asOf: string, hu: number): string[] {
+// Từng nhóm tiền mặt + tổng; có hũ (tiền / vàng) thì thêm dòng hũ và tổng tài sản (ước tính)
+export function balanceSummaryLines(
+  nhom: Record<MoneyHolderId, number>,
+  tong: number,
+  asOf: string,
+  hu: Pick<SavingsSummary, 'tien' | 'vangPhan' | 'vangGiaTri'>,
+): string[] {
   const holders: MoneyHolderId[] = ['VO', 'CHONG', 'QUY_CHUNG', 'CHUA_XAC_DINH'];
   const lines = [
     `💰 Số dư đến ${formatDay(asOf)}:`,
     ...holders.filter((h) => h !== 'CHUA_XAC_DINH' || nhom[h] !== 0).map((h) => `• ${HOLDER_NAME[h]}: ${formatMoney(nhom[h])}`),
   ];
-  if (hu === 0) {
+  if (hu.tien === 0 && hu.vangPhan === 0) {
     return [...lines, `Tổng: ${formatMoney(tong)}`];
   }
+  const unpriced = hu.vangPhan !== 0 && hu.vangGiaTri === null ? ' (chưa tính vàng chưa định giá)' : '';
   return [
     ...lines,
     `Tiền mặt: ${formatMoney(tong)}`,
-    `🏺 Hũ tiết kiệm: ${formatMoney(hu)}`,
-    `Tổng tài sản (ước tính): ${formatMoney(tong + hu)}`,
+    `🏺 Hũ tiết kiệm: ${assetText(hu.tien, hu.vangPhan, hu.vangGiaTri)}`,
+    `Tổng tài sản (ước tính): ${formatMoney(tong + hu.tien + (hu.vangGiaTri ?? 0))}${unpriced}`,
   ];
 }
 
@@ -189,10 +215,24 @@ const SAVINGS_VERB: Record<string, string> = {
   RUT: 'lấy ra từ',
 };
 
-// "bỏ hũ Mua nhà" / "Bỏ hũ Mua nhà"
+const GOLD_VERB: Record<string, string> = { KHAI_BAO: 'khai báo vàng', NOP: 'mua vàng', RUT: 'bán vàng' };
+
+// "bỏ hũ Mua nhà" / "Bỏ hũ Mua nhà" / "Mua vàng 2 chỉ vào hũ Tiết kiệm"
 function savingsAction(f: HuTietKiemRecord, jar: HuRecord, capital: boolean): string {
-  const verb = SAVINGS_VERB[f.chieu] ?? f.chieu;
-  return `${capital ? verb.charAt(0).toUpperCase() + verb.slice(1) : verb} hũ ${jar.ten}`;
+  const gold = f.loai_tai_san === 'VANG';
+  const verb = (gold ? GOLD_VERB : SAVINGS_VERB)[f.chieu] ?? f.chieu;
+  const head = capital ? verb.charAt(0).toUpperCase() + verb.slice(1) : verb;
+  return gold ? `${head} ${formatGold(Number(f.so_luong_phan))} ${f.chieu === 'RUT' ? 'từ' : 'vào'} hũ ${jar.ten}` : `${head} hũ ${jar.ten}`;
+}
+
+// " 28.000.000đ (14.000.000đ/chỉ)" — đơn giá khi vàng khác 1 chỉ
+function savingsAmount(f: HuTietKiemRecord): string {
+  if (f.so_tien === null) {
+    return '';
+  }
+  const phan = Number(f.so_luong_phan);
+  const unit = f.loai_tai_san === 'VANG' && phan !== 10 ? ` (${formatMoney(pricePerChi(Number(f.so_tien), phan))}/chỉ)` : '';
+  return ` ${formatMoney(Number(f.so_tien))}${unit}`;
 }
 
 // "từ quỹ chung" / "vợ trả" (bỏ vào) — "vào quỹ chung" / "vợ nhận" (lấy ra)
@@ -207,25 +247,31 @@ function savingsSource(f: HuTietKiemRecord): string {
   return `${memberName(f.nguon_id).toLowerCase()} ${from ? 'trả' : 'nhận'}`;
 }
 
-export function savingsText(f: HuTietKiemRecord, jar: HuRecord, overBalance: boolean): string {
+// giaThamChieu: đơn giá vàng lệch xa giá đang dùng (đồng/chỉ) → cảnh báo gõ nhầm
+export function savingsText(f: HuTietKiemRecord, jar: HuRecord, overBalance: boolean, giaThamChieu: number | null = null): string {
   const prefix = f.trang_thai === 'DA_HUY' ? '❌ Đã huỷ: ' : '🏺 ';
-  const amount = f.so_tien === null ? '' : ` ${formatMoney(Number(f.so_tien))}`;
+  const gold = f.loai_tai_san === 'VANG';
   const warn = !overBalance
     ? ''
     : f.chieu === 'RUT'
-      ? '\n⚠️ Lấy ra nhiều hơn số đang có trong hũ — kiểm tra lại.'
+      ? gold
+        ? '\n⚠️ Bán nhiều hơn số vàng đang có trong hũ — kiểm tra lại.'
+        : '\n⚠️ Lấy ra nhiều hơn số đang có trong hũ — kiểm tra lại.'
       : '\n⚠️ Số tiền lớn hơn số đang giữ — kiểm tra lại.';
+  const price =
+    giaThamChieu && f.trang_thai !== 'DA_HUY'
+      ? `\n⚠️ Giá này lệch xa giá đang dùng ${formatMoney(giaThamChieu)}/chỉ — gõ đúng chưa? Sai thì bấm Huỷ rồi nhắn lại.`
+      : '';
   const note =
-    f.chieu === 'KHAI_BAO' && f.trang_thai !== 'DA_HUY'
+    f.chieu === 'KHAI_BAO' && !gold && f.trang_thai !== 'DA_HUY'
       ? '\nLưu ý: tiền này không được nằm sẵn trong số dư ban đầu của vợ/chồng/quỹ (sẽ bị tính 2 lần).'
       : '';
-  return `${prefix}${savingsAction(f, jar, true)}${amount} · ${savingsSource(f)} · ${formatDay(f.ngay)}${warn}${note}`;
+  return `${prefix}${savingsAction(f, jar, true)}${savingsAmount(f)} · ${savingsSource(f)} · ${formatDay(f.ngay)}${warn}${price}${note}`;
 }
 
 // "bỏ hũ Mua nhà 1.000.000đ (vợ trả, 05/11)." — dùng cho tin báo ghi và báo huỷ
 function savingsNoticeBody(f: HuTietKiemRecord, jar: HuRecord): string {
-  const amount = f.so_tien === null ? '' : ` ${formatMoney(Number(f.so_tien))}`;
-  return `${savingsAction(f, jar, false)}${amount} (${savingsSource(f)}, ${formatDay(f.ngay)}).`;
+  return `${savingsAction(f, jar, false)}${savingsAmount(f)} (${savingsSource(f)}, ${formatDay(f.ngay)}).`;
 }
 
 export function savingsNoticeText(f: HuTietKiemRecord, jar: HuRecord): string {
@@ -241,14 +287,17 @@ export function jarExpenseNoticeText(tx: GiaoDichRecord, jar: HuRecord, by: stri
   return `ℹ️ ${memberName(by)}: chi ${formatMoney(Number(tx.so_tien))} từ hũ ${jar.ten} (${formatDay(tx.ngay_giao_dich)}).`;
 }
 
-// /tietkiem: từng hũ (số tiền, % mục tiêu) + tổng
-export function jarListLines(rows: ReadonlyArray<{ jar: HuRecord; tien: number }>, asOf: string): string[] {
-  const lines = rows.map(({ jar, tien }) => {
-    const goal = jar.muc_tieu ? ` / ${formatMoney(jar.muc_tieu)} (${Math.floor((Math.max(tien, 0) * 100) / jar.muc_tieu)}%)` : '';
-    return `• ${jar.ten}: ${formatMoney(tien)}${goal}`;
+// /tietkiem: từng hũ (tiền + vàng, % mục tiêu tính cả vàng đã định giá) + tổng + giá vàng đang dùng
+export function jarListLines(s: SavingsSummary, asOf: string): string[] {
+  const lines = s.rows.map(({ jar, tien, vangPhan }) => {
+    const vang = goldValue(vangPhan, s.gia);
+    const value = tien + (vang ?? 0);
+    const goal = jar.muc_tieu ? ` / ${formatMoney(jar.muc_tieu)} (${Math.floor((Math.max(value, 0) * 100) / jar.muc_tieu)}%)` : '';
+    return `• ${jar.ten}: ${assetText(tien, vangPhan, vang)}${goal}`;
   });
-  const total = rows.reduce((s, r) => s + r.tien, 0);
-  return [`🏺 Hũ đến ${formatDay(asOf)}:`, ...lines, `Tổng hũ: ${formatMoney(total)}`];
+  const hasGold = s.vangPhan !== 0;
+  const total = `${hasGold ? '≈ ' : ''}${formatMoney(s.tien + (s.vangGiaTri ?? 0))}${hasGold && s.vangGiaTri === null ? ' (chưa tính vàng)' : ''}`;
+  return [`🏺 Hũ đến ${formatDay(asOf)}:`, ...lines, `Tổng hũ: ${total}`, ...goldPriceLine(hasGold ? s.gia : null)];
 }
 
 // ---------- Bỏ qua / hướng dẫn ----------
@@ -270,6 +319,14 @@ const IGNORED_TEXT: Record<string, string> = {
   HU_KHONG_CO: 'Chưa có hũ tên này. Xem các hũ: /tietkiem · tạo hũ: /taohu <tên> [mục tiêu], vd /taohu Mua nhà 2 tỷ',
   HU_CHI_HO_TRO_CHI: 'Chỉ khoản chi mới trả từ hũ được.',
   HU_NGUON_KHONG_RO: "Chưa rõ tiền lấy từ đâu — nhắn 'lấy quỹ chung bỏ hũ 2tr' hoặc 'bỏ hũ 2tr' (trừ tiền của bạn).",
+  VANG_THIEU_SO_LUONG: "Mấy chỉ vàng? Nhắn lại kèm số lượng, vd 'mua vàng 1 chỉ 14tr' (chỉ / phân / lượng).",
+  VANG_LE_QUA_NHO: "Số lượng vàng lẻ hơn 1 phân — nhắn theo chỉ / phân, vd 'mua vàng 2 phân 3tr'.",
+  VANG_SO_LUONG_MO_HO: "Có nhiều số lượng vàng — nhắn lại 1 số, vd 'mua vàng 2 chỉ 28tr'.",
+  VANG_SO_TIEN_MO_HO: "Số tiền chưa rõ — nhắn tổng tiền ('mua vàng 2 chỉ 28tr') hoặc giá 1 chỉ ('mua vàng 2 chỉ 14tr/chỉ').",
+  VANG_BAN_THIEU_TIEN: "Bán được bao nhiêu? Nhắn lại, vd 'bán vàng 1 chỉ 15tr' (tiền về bạn) hoặc 'bán vàng 1 chỉ 15tr bỏ quỹ chung'.",
+  VANG_TU_HU: "Chưa hỗ trợ đổi tiền trong hũ sang vàng — nhắn 2 tin: 'rút hũ 28tr' rồi 'mua vàng 2 chỉ 28tr'.",
+  VANG_CHON_HU: "Vàng đang ở nhiều hũ — ghi rõ hũ, vd 'bán vàng 1 chỉ 15tr từ hũ mua nhà'.",
+  VANG_NGUON_KHONG_RO: "Chưa rõ tiền quỹ chung đi đâu — nhắn 'lấy quỹ chung mua vàng 1 chỉ 14tr' hoặc 'bán vàng 1 chỉ 15tr bỏ quỹ chung'.",
   DA_HUY: 'Khoản này đã huỷ.',
   HET_HAN: 'Khoản này đã hết hạn.',
   TU_CHOI: 'Khoản này đã bị từ chối.',
@@ -285,17 +342,18 @@ export const HELP_TEXT = [
   '• tiền ăn 50k · lương 20tr · cafe 30k',
   '• chuyển vợ 3tr · bỏ vào quỹ chung 2tr',
   '• bỏ hũ tiết kiệm 5tr · rút hũ tiết kiệm 2tr',
+  '• mua vàng 1 chỉ 14tr · bán vàng 1 chỉ 15tr',
   'Hỏi:',
   '• tháng này vợ chi bao nhiêu · chi tiền học năm nay',
   '• gia đình còn bao nhiêu · chi theo danh mục tháng trước',
   'Lệnh:',
   '/sodu — số dư từng người',
   '/tuan, /thang — tổng hợp tuần / tháng này (thêm "trước", "vợ", "chồng": /tuan trước vợ)',
-  'Xem từng khoản: "liệt kê chi tiết vợ chi tuần trước" (tối đa 30 ngày cuối kỳ)',
+  'Xem từng khoản: "liệt kê chi tiết vợ chi tuần trước" (tối đa 31 ngày cuối kỳ)',
   '/cho — khoản chuyển đang chờ',
   '/ghichu — ghi chú nợ',
   '/sodudau <vợ> <chồng> <quỹ> — nhập số dư ban đầu (1 lần)',
-  '/tietkiem — các hũ · /taohu <tên> [mục tiêu] — tạo hũ · /tietkiemdau <tiền> [hũ] — khai báo tiền đang để dành',
+  '/tietkiem — các hũ · /taohu <tên> [mục tiêu] — tạo hũ · /tietkiemdau <tiền | N chỉ vàng> [hũ] — khai báo tiền / vàng đang để dành',
 ].join('\n');
 
 export const SHORT_HELP = "Chưa hiểu tin này. Nhắn kiểu 'tiền ăn 50k', hoặc /help.";

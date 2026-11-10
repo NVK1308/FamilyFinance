@@ -75,6 +75,8 @@ export type RecordOutcome =
       jar: HuRecord;
       // Bỏ vào nhiều hơn nguồn đang giữ / lấy ra nhiều hơn hũ đang có (chỉ cảnh báo)
       canhBaoVuotSoDu: boolean;
+      // Vàng: đơn giá lệch > 30% so với giá đang dùng → giá đang dùng (đồng/chỉ), chỉ cảnh báo
+      giaVangThamChieu?: number | null;
     }
   | { kind: 'IGNORED'; duplicate: boolean; message: TinNhanGocRecord; reason: string }
   | { kind: 'NOT_TRANSACTION'; parsed: ParseResult };

@@ -5,6 +5,7 @@ import {
   MESSAGE_STATUS,
   SAVINGS_DIRECTION,
   TABLE_NAME,
+  type AssetType,
   type MemberId,
   type SavingsSourceId,
 } from '../config/constants.ts';
@@ -17,10 +18,12 @@ import {
   getSavingsMoveByTransaction,
   insertJar,
   insertSavingsMove,
+  latestGoldPrice,
   listActiveJars,
   listRecentSavingsMoves,
   markSavingsMoveCancelled,
   sumSavingsCash,
+  sumGoldByJar,
   sumSavingsCashByJar,
   updateMessageStatus,
 } from '../db/repositories/index.ts';
@@ -49,11 +52,47 @@ export interface SavingsCancelResult {
 export interface JarBalance {
   jar: HuRecord;
   tien: number;
+  // Vàng trong hũ (phân)
+  vangPhan: number;
 }
 
+// Giá vàng đang dùng: dòng có giá gần nhất (so_tien cho so_luong_phan phân)
+export interface GoldPrice {
+  soTien: number;
+  phan: number;
+  ngay: string;
+  // Giá lấy từ dòng khai báo (chưa có lần mua / bán nào có giá)
+  khaiBao: boolean;
+}
+
+// Mọi hũ: từng hũ + tổng tiền, tổng vàng, giá trị vàng (null = chưa định giá)
+export interface SavingsSummary {
+  rows: JarBalance[];
+  gia: GoldPrice | null;
+  tien: number;
+  vangPhan: number;
+  vangGiaTri: number | null;
+}
+
+export function goldValue(phan: number, gia: GoldPrice | null): number | null {
+  return gia ? Math.round((phan * gia.soTien) / gia.phan) : null;
+}
+
+// Giá 1 chỉ của dòng soTien cho phan phân
+export function pricePerChi(soTien: number, phan: number): number {
+  return Math.round((soTien * 10) / phan);
+}
+
+export function goldPricePerChi(gia: GoldPrice): number {
+  return pricePerChi(gia.soTien, gia.phan);
+}
+
+// Đơn giá lệch quá mức này so với giá đang dùng → cảnh báo (gõ nhầm "1tr4" thay "14tr")
+const GOLD_PRICE_DEVIATION = 0.3;
+
 const JAR_NAME_MAX = 30;
-// Tên dành riêng: "chung" (quỹ chung)
-const RESERVED_JAR_NAMES = new Set(['chung', 'quy chung', 'hu', 'quy']);
+// Tên dành riêng: "chung" (quỹ chung), "vàng" (câu vàng)
+const RESERVED_JAR_NAMES = new Set(['chung', 'quy chung', 'hu', 'quy', 'vang']);
 
 // "Quỹ Y tế" → { ten: 'Y tế', key: 'y te' }; bỏ tiền tố hũ/quỹ (parser cũng bỏ chữ này khi khớp tên)
 export function normalizeJarName(raw: string): { ten: string; key: string } {
@@ -111,17 +150,27 @@ export class SavingsService {
         if (reason || group === null) {
           return ignoreMessage(tx, messageId, reason ?? 'HU_NGUOI_GUI_KHONG_HOP_LE', nowIso);
         }
-        const jar = await this.resolveJar(tx, parsed.ten_hu);
+        const gold = parsed.loai_tai_san === ASSET_TYPE.VANG;
+        // Bán vàng không nêu hũ → hũ đang có vàng
+        const jar =
+          gold && parsed.chieu === SAVINGS_DIRECTION.RUT && !parsed.ten_hu ? await this.goldSellJar(tx, parsed.ngay) : await this.resolveJar(tx, parsed.ten_hu);
+        if (jar === 'NHIEU') {
+          return ignoreMessage(tx, messageId, 'VANG_CHON_HU', nowIso);
+        }
         if (!jar) {
           return ignoreMessage(tx, messageId, 'HU_KHONG_CO', nowIso);
         }
         const declare = parsed.chieu === SAVINGS_DIRECTION.KHAI_BAO;
+        const soTien = parsed.so_tien;
+        const giaTruoc = gold && soTien !== null ? await this.goldPrice(parsed.ngay, tx) : null;
         const move = await this.insert(tx, {
           chieu: parsed.chieu,
           huId: jar.id,
-          soTien: parsed.so_tien as number,
-          // Nguồn tiền mặt là nhóm của người gửi (theo vai trò), hoặc quỹ chung
-          nguon: declare ? null : parsed.nguon_id === 'QUY_CHUNG' ? 'QUY_CHUNG' : group,
+          loaiTaiSan: parsed.loai_tai_san,
+          soLuongPhan: gold ? parsed.so_luong_phan : null,
+          soTien,
+          // Nguồn tiền mặt là nhóm của người gửi (theo vai trò), hoặc quỹ chung; không có tiền → không nguồn
+          nguon: declare || soTien === null ? null : parsed.nguon_id === 'QUY_CHUNG' ? 'QUY_CHUNG' : group,
           memberId: sender.id as MemberId,
           ngay: parsed.ngay,
           messageId,
@@ -131,7 +180,15 @@ export class SavingsService {
           nowIso,
         });
         await updateMessageStatus(tx, messageId, MESSAGE_STATUS.DA_GHI, nowIso);
-        return { kind: 'SAVINGS_MOVE', duplicate: false, message: await requireMessage(tx, messageId), move, jar, canhBaoVuotSoDu: false };
+        return {
+          kind: 'SAVINGS_MOVE',
+          duplicate: false,
+          message: await requireMessage(tx, messageId),
+          move,
+          jar,
+          canhBaoVuotSoDu: false,
+          giaVangThamChieu: priceDeviation(move, giaTruoc),
+        };
       }),
     );
     if (outcome.kind === 'SAVINGS_MOVE' && !outcome.duplicate) {
@@ -150,6 +207,29 @@ export class SavingsService {
     if (!Number.isSafeInteger(soTien) || soTien <= 0) {
       throw new DomainError('INVALID_INPUT', 'Số tiền phải lớn hơn 0');
     }
+    return this.declareAsset(sender, { loai: ASSET_TYPE.TIEN, soTien, phan: null }, key, tenHu);
+  }
+
+  // /tietkiemdau 3 chỉ vàng [giá] [hũ]: vàng đang có (không trừ ai); giá (tổng) không bắt buộc
+  async declareGold(
+    sender: ThanhVienRecord,
+    phan: number,
+    soTien: number | null,
+    key: string,
+    tenHu: string | null = null,
+  ): Promise<{ move: HuTietKiemRecord; jar: HuRecord; duplicate: boolean }> {
+    if (!Number.isSafeInteger(phan) || phan <= 0 || (soTien !== null && (!Number.isSafeInteger(soTien) || soTien <= 0))) {
+      throw new DomainError('INVALID_INPUT', 'Số lượng / số tiền phải lớn hơn 0');
+    }
+    return this.declareAsset(sender, { loai: ASSET_TYPE.VANG, soTien, phan }, key, tenHu);
+  }
+
+  private async declareAsset(
+    sender: ThanhVienRecord,
+    asset: { loai: AssetType; soTien: number | null; phan: number | null },
+    key: string,
+    tenHu: string | null,
+  ): Promise<{ move: HuTietKiemRecord; jar: HuRecord; duplicate: boolean }> {
     // Cùng điều kiện với đường nhắn tin: chỉ vợ / chồng
     if (memberGroup(sender) === null) {
       throw new DomainError('FORBIDDEN', 'HU_NGUOI_GUI_KHONG_HOP_LE');
@@ -168,7 +248,9 @@ export class SavingsService {
         this.insert(tx, {
           chieu: SAVINGS_DIRECTION.KHAI_BAO,
           huId: jar.id,
-          soTien,
+          loaiTaiSan: asset.loai,
+          soLuongPhan: asset.phan,
+          soTien: asset.soTien,
           nguon: null,
           memberId: sender.id as MemberId,
           ngay: toVnDate(this.now()),
@@ -260,7 +342,7 @@ export class SavingsService {
     tx: DatabaseAdapter,
     i: { huId: string; soTien: number; nguon: SavingsSourceId; memberId: MemberId; ngay: string; giaoDichId: string; messageId: string | null; key: string; nowIso: string },
   ): Promise<HuTietKiemRecord> {
-    return this.insert(tx, { ...i, chieu: SAVINGS_DIRECTION.RUT, ghiChu: null });
+    return this.insert(tx, { ...i, chieu: SAVINGS_DIRECTION.RUT, loaiTaiSan: ASSET_TYPE.TIEN, soLuongPhan: null, ghiChu: null });
   }
 
   // Huỷ khoản chi trả từ hũ → huỷ luôn dòng RUT đi kèm (cùng transaction)
@@ -279,19 +361,39 @@ export class SavingsService {
     return move ? this.requireJar(move, db) : null;
   }
 
-  // Tổng mọi hũ đến ngày asOf
-  getJar(asOf: string): Promise<{ tien: number; soDong: number }> {
-    return this.balances.getSavingsJar(asOf);
-  }
-
   async jarBalance(asOf: string, huId: string): Promise<number> {
     return (await sumSavingsCash(this.db, asOf, huId)).tien;
   }
 
-  // Từng hũ đang hoạt động + số tiền (hũ trống vẫn hiện)
-  async listJarBalances(asOf: string): Promise<JarBalance[]> {
-    const [jars, sums] = await Promise.all([listActiveJars(this.db), sumSavingsCashByJar(this.db, asOf)]);
-    return jars.map((jar) => ({ jar, tien: sums.get(jar.id) ?? 0 }));
+  // Mọi hũ + giá vàng đang dùng (dùng chung /tietkiem, /sodu, câu hỏi).
+  // rows: hũ đang dùng (hũ trống vẫn hiện); tổng tính cả hũ đã ẩn (tiền vẫn là tài sản).
+  async summary(asOf: string): Promise<SavingsSummary> {
+    const [jars, cash, gold, gia] = await Promise.all([
+      listActiveJars(this.db),
+      sumSavingsCashByJar(this.db, asOf),
+      sumGoldByJar(this.db, asOf),
+      this.goldPrice(asOf),
+    ]);
+    const rows = jars.map((jar) => ({ jar, tien: cash.get(jar.id) ?? 0, vangPhan: gold.get(jar.id) ?? 0 }));
+    const vangPhan = sumValues(gold);
+    return { rows, gia, tien: sumValues(cash), vangPhan, vangGiaTri: goldValue(vangPhan, gia) };
+  }
+
+  async goldPrice(asOf: string, db: DatabaseAdapter = this.db): Promise<GoldPrice | null> {
+    const row = await latestGoldPrice(db, asOf);
+    return row && row.so_tien !== null && row.so_luong_phan
+      ? { soTien: row.so_tien, phan: row.so_luong_phan, ngay: row.ngay, khaiBao: row.chieu === SAVINGS_DIRECTION.KHAI_BAO }
+      : null;
+  }
+
+  // Bán vàng không nêu hũ: đúng 1 hũ đang dùng có vàng → hũ đó; nhiều hũ → 'NHIEU'; không hũ nào → hũ mặc định
+  private async goldSellJar(db: DatabaseAdapter, asOf: string): Promise<HuRecord | 'NHIEU' | null> {
+    const [jars, gold] = await Promise.all([listActiveJars(db), sumGoldByJar(db, asOf)]);
+    const holding = jars.filter((j) => (gold.get(j.id) ?? 0) > 0);
+    if (holding.length > 1) {
+      return 'NHIEU';
+    }
+    return holding[0] ?? (await this.resolveJar(db, null));
   }
 
   listJars(): Promise<HuRecord[]> {
@@ -315,7 +417,9 @@ export class SavingsService {
     i: {
       chieu: HuTietKiemRecord['chieu'];
       huId: string;
-      soTien: number;
+      loaiTaiSan: AssetType;
+      soLuongPhan: number | null;
+      soTien: number | null;
       nguon: SavingsSourceId | null;
       memberId: MemberId;
       ngay: string;
@@ -329,8 +433,8 @@ export class SavingsService {
     const move = await insertSavingsMove(tx, {
       id: newId('HK'),
       chieu: i.chieu,
-      loai_tai_san: ASSET_TYPE.TIEN,
-      so_luong_phan: null,
+      loai_tai_san: i.loaiTaiSan,
+      so_luong_phan: i.soLuongPhan,
       so_tien: i.soTien,
       nguon_id: i.nguon,
       hu_id: i.huId,
@@ -356,7 +460,11 @@ export class SavingsService {
       return false;
     }
     try {
-      return (await sumSavingsCash(this.db, move.ngay, move.hu_id ?? DEFAULT_JAR_ID)).tien < 0;
+      const huId = move.hu_id ?? DEFAULT_JAR_ID;
+      if (move.loai_tai_san === ASSET_TYPE.VANG) {
+        return ((await sumGoldByJar(this.db, move.ngay)).get(huId) ?? 0) < 0;
+      }
+      return (await sumSavingsCash(this.db, move.ngay, huId)).tien < 0;
     } catch (error) {
       console.error('Hũ tiết kiệm: tính cảnh báo lỗi, bỏ cảnh báo', error);
       return false;
@@ -364,12 +472,31 @@ export class SavingsService {
   }
 }
 
+// Đơn giá dòng mới lệch > 30% giá đang dùng → giá đang dùng (đồng/chỉ); không thì null
+function priceDeviation(move: HuTietKiemRecord, gia: GoldPrice | null): number | null {
+  if (!gia || move.so_tien === null || !move.so_luong_phan) {
+    return null;
+  }
+  const ref = goldPricePerChi(gia);
+  const unit = pricePerChi(move.so_tien, move.so_luong_phan);
+  return Math.abs(unit - ref) > ref * GOLD_PRICE_DEVIATION ? ref : null;
+}
+
+function sumValues(m: Map<string, number>): number {
+  return [...m.values()].reduce((s, v) => s + v, 0);
+}
+
 // Lý do không ghi (null = ghi được)
 function rejectReason(parsed: ParsedSavingsResult, group: 'VO' | 'CHONG' | null, today: string): string | null {
   if (parsed.ly_do_chua_ho_tro) {
     return parsed.ly_do_chua_ho_tro;
   }
-  if (parsed.so_tien === null) {
+  if (parsed.loai_tai_san === ASSET_TYPE.VANG) {
+    // Vàng: tiền không bắt buộc (chỉ số lượng) — trừ khi bán (tiền về ai?)
+    if (parsed.so_tien_mo_ho) return 'VANG_SO_TIEN_MO_HO';
+    if (parsed.so_luong_phan === null) return 'VANG_THIEU_SO_LUONG';
+    if (parsed.chieu === SAVINGS_DIRECTION.RUT && parsed.so_tien === null) return 'VANG_BAN_THIEU_TIEN';
+  } else if (parsed.so_tien === null) {
     return parsed.so_tien_mo_ho ? 'SO_TIEN_MO_HO' : 'THIEU_SO_TIEN';
   }
   if (group === null) {
