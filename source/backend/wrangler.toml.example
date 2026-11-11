@@ -9,8 +9,9 @@ CURRENCY = "VND"
 ENVIRONMENT = "development"
 
 # Job hết hạn yêu cầu xác nhận: 18:00 UTC = 1h sáng giờ VN
+# Báo cáo tháng: 01:00–14:00 UTC ngày 1–3 (8h sáng VN, chạy bắt bù; mỗi người chỉ nhận 1 lần)
 [triggers]
-crons = ["0 18 * * *"]
+crons = ["0 18 * * *", "0 1-14 1-3 * *"]
 
 # Lưu ý bảo mật:
 # Secret (bắt buộc): TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, NEON_DATABASE_URL.

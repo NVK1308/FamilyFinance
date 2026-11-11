@@ -129,11 +129,23 @@
 - **`/giavang`**: bảng mới `gia_vang` (migration 0006, Neon `temp/neon/08_gia_vang.sql`; deploy bước 5 kiểm `co_gia_vang`). `/giavang 15tr` (1 chỉ), `/giavang 150tr lượng`, `/giavang` (xem giá đang dùng). Giá đang dùng = giá `/giavang` nếu mới hơn (ngày, rồi thứ tự ghi) lần mua/bán có giá gần nhất (chưa có mua/bán thì so với khai báo). Lệch > 30% giá trước → cảnh báo gõ nhầm. Neon chưa có bảng → chỉ bỏ qua giá thị trường (đọc ngoài transaction), mua/bán vàng vẫn ghi.
 - Test: [phase5e-fund-to-member.test.ts](file:///F:/FamilyFinance/source/backend/tests/phase5e-fund-to-member.test.ts), phase5c-gold (mục /giavang). Code review high: 10 điểm, đã sửa hết.
 
+### ✅ `/dieuchinh` + Phase 6 báo cáo tháng (CODE XONG 11/11, 327/327 test, typecheck + verify-schema sạch; CHƯA COMMIT, CHƯA DEPLOY)
+- Nguồn: số dư vợ âm −11.892.000đ (Neon 11/11, `temp/neon/kiem_tra_so_du_vo.sql`): số dư ban đầu 5tr, 0 khoản thu, 21 khoản chi 16,9tr — không phải vay mà là khai thiếu / chưa ghi thu.
+- **`/dieuchinh <vợ|chồng|quỹ> <+tiền|-tiền|= số thực tế> [lý do]`** → `giao_dich` DIEU_CHINH TANG/GIAM (đổi số dư, không vào thu/chi), trả lời số dư trước → sau + nút Huỷ, báo người kia. Key `api:<update_id hex>` (Telegram gửi lại không ghi 2 lần).
+- **Phase 6** (plan + review_1 + v2 mục 7–8: `E:\QuangIch\AIWorkspace\sessions\FamilyFinance\2026-11-10_bao-cao-thang\`; người dùng chốt: gói Workers **Free**, 8h ngày 1, cả 2 người):
+  - `ReportService` (chỉ đọc, không giới hạn nhóm như tin nhắn; tổng các dòng = tổng chi). Tháng đang chạy so với cùng đoạn ngày tháng trước.
+  - `report-html.ts`: trang tóm tắt 1080×1350 (chụp thành ảnh) + file HTML đầy đủ (danh mục, người, đối tượng, số dư cuối kỳ, hũ/vàng, chuyển tiền, quỹ chung, mọi khoản). Escape mọi chữ, CSP, không JS.
+  - Ảnh: **Cloudflare Browser Rendering REST `/screenshot`** (`CF_ACCOUNT_ID`, `CF_BROWSER_TOKEN`); 2 người dùng chung 1 lần chụp; lỗi / thiếu cấu hình → tin chữ tóm tắt. File HTML dựng sau khi gửi ảnh.
+  - `/baocao [trước | 10 | 10/2025]`: dựng sau khi webhook trả 200 (`BotAction` `deferred`).
+  - Cron `0 1-14 1-3 * *` (`REPORT_CRON`, worker rẽ nhánh theo `controller.cron`) + bảng `bao_cao_da_gui` (migration 0007, Neon `temp/neon/09_bao_cao.sql`) — mỗi người 1 lần, gửi lại khi lỗi tối đa 3 lần.
+- Sửa test P11 (phase4) phụ thuộc ngày chạy (yêu cầu xác nhận hết hạn 7 ngày) → đồng hồ cố định.
+- Test: [phase5f-adjust.test.ts](file:///F:/FamilyFinance/source/backend/tests/phase5f-adjust.test.ts), [phase6-report.test.ts](file:///F:/FamilyFinance/source/backend/tests/phase6-report.test.ts). Ảnh tóm tắt + HTML đã xem thử bằng trình duyệt (Playwright). Code review high: 10 điểm (cron chưa đăng ký, lý do bị đọc thành đơn vị tiền, gửi lại vô hạn, dựng báo cáo trước khi trả 200, CPU…), đã sửa hết.
+
 ## 3. Công Việc Tiếp Theo
 
 - **Deploy 5b + 5c-1 (nhiều hũ)**: Neon chạy lần lượt `temp/neon/04_them_cac_con.sql` → `05_hu_tiet_kiem.sql` → `06_nhieu_hu.sql` (file nào đã chạy thì bỏ qua; chạy lại cũng không sao), sau đó `deploy.ps1 -From 3 -To 4 -Yes`. Thử câu hỏi thật, câu sai → bổ sung luật (xem tin `CAU_HOI_CHUA_HIEU`).
-- **Deploy 5c-2 + quỹ → vợ/chồng + /giavang**: Neon chạy `temp/neon/08_gia_vang.sql`, rồi `deploy.ps1 -From 3 -To 4 -Yes`.
-- **Phase 6 — báo cáo tháng** (đang plan): ảnh PNG tóm tắt + file HTML gửi cả 2 người ngày 1 hằng tháng + `/baocao`. Plan: `E:\QuangIch\AIWorkspace\sessions\FamilyFinance\2026-11-10_bao-cao-thang\plan.md` (chờ chốt Q1–Q5).
+- **Deploy đợt 10–11/11** (quỹ → vợ/chồng, /giavang, /dieuchinh, báo cáo tháng): Neon chạy `temp/neon/08_gia_vang.sql` → `09_bao_cao.sql`; tạo API token Browser Rendering + `wrangler secret put CF_ACCOUNT_ID` / `CF_BROWSER_TOKEN` (DEPLOY.md mục 3); rồi `deploy.ps1 -From 2 -To 4 -Yes` (**từ bước 2** để thêm lịch cron báo cáo). Sau deploy: `/baocao`, `/dieuchinh vợ = <số thực tế>` để sửa số dư vợ âm.
+- Theo dõi log Worker lần chạy báo cáo đầu (gói Free 10 ms CPU: nếu lỗi 1102 thì tách dựng HTML / giảm số dòng).
 - **Để sau**: quản lý hũ (đổi tên / ẩn / sửa mục tiêu); khoản "mua vàng" đã ghi Chi trước 5c-2 không tự chuyển. **Không làm** (người dùng chốt 10/11): đổi tiền hũ ↔ vàng trong 1 tin — giữ nhắn 2 tin.
 - **Còn thiếu khi dùng hằng ngày** (rà theo [HUONG_DAN_SU_DUNG.md](HUONG_DAN_SU_DUNG.md) mục 6): sửa khoản đã ghi (hiện chỉ Huỷ + nhắn lại), thống kê nợ, điều chỉnh số dư qua chat. Gợi ý mới (chưa chốt): ngân sách theo danh mục + cảnh báo, khoản định kỳ (nhắc hằng tháng, 1 nút ghi), tách ví / tài khoản ngân hàng. Đề xuất ưu tiên: sửa khoản + khoản định kỳ.
 - Dồn lại: version seed (Phase 7), khoá kỳ đã chốt (Phase 8), test kết nối Neon WS thật (Phase 10).

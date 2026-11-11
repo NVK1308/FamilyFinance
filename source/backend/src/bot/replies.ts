@@ -95,7 +95,8 @@ const TYPE_LABEL: Record<TransactionType, string> = {
 // ---------- Giao dịch ----------
 
 export function transactionLine(tx: GiaoDichRecord, categoryName: string | null): string {
-  const parts = [`${TYPE_LABEL[tx.loai_giao_dich]} ${formatMoney(Number(tx.so_tien))}`];
+  const label = tx.loai_giao_dich === 'DIEU_CHINH' ? `Điều chỉnh ${tx.chieu_dieu_chinh === 'GIAM' ? 'giảm' : 'tăng'}` : TYPE_LABEL[tx.loai_giao_dich];
+  const parts = [`${label} ${formatMoney(Number(tx.so_tien))}`];
   if (categoryName) {
     parts.push(categoryName);
   }
@@ -331,7 +332,7 @@ const IGNORED_TEXT: Record<string, string> = {
   THIEU_SO_TIEN: "Chưa rõ số tiền — nhắn lại đầy đủ, vd 'tiền ăn 50k'.",
   SO_TIEN_MO_HO: "Số tiền chưa rõ (có 2 số) — nhắn lại 1 số, vd 'tiền ăn 50k'.",
   THIEU_HOAC_MO_HO_SO_TIEN: "Chưa rõ số tiền chuyển — nhắn lại, vd 'chuyển vợ 3tr'.",
-  DIEU_CHINH_CHUA_HO_TRO_CHAT: 'Điều chỉnh số dư chưa làm được qua chat.',
+  DIEU_CHINH_CHUA_HO_TRO_CHAT: 'Điều chỉnh số dư dùng lệnh: /dieuchinh vợ +2tr · /dieuchinh vợ = 3tr (số thực tế đang có).',
   CHU_NGU_KHAC_NGUOI_GUI: 'Chỉ ghi được khoản do chính bạn chuyển — người kia tự nhắn nhé.',
   CHUYEN_TU_QUY_CHUNG: "Chưa rõ tiền đi đâu — nhắn 'chuyển vợ 2tr từ quỹ chung' (quỹ → vợ) hoặc 'bỏ vào quỹ chung 2tr'.",
   CO_NGUOI_NHAN: "Nộp quỹ chung không có người nhận — nhắn 'bỏ vào quỹ chung 2tr'; đưa tiền quỹ cho vợ: 'rút quỹ chung cho vợ 2tr'.",
@@ -374,11 +375,13 @@ export const HELP_TEXT = [
   '• gia đình còn bao nhiêu · chi theo danh mục tháng trước',
   'Lệnh:',
   '/sodu — số dư từng người',
+  '/baocao — báo cáo tháng: ảnh tóm tắt + file HTML (/baocao trước · /baocao 10); ngày 1 tự gửi báo cáo tháng trước',
   '/tuan, /thang — tổng hợp tuần / tháng này (thêm "trước", "vợ", "chồng": /tuan trước vợ)',
   'Xem từng khoản: "liệt kê chi tiết vợ chi tuần trước" (tối đa 31 ngày cuối kỳ)',
   '/cho — khoản chuyển đang chờ',
   '/ghichu — ghi chú nợ',
   '/sodudau <vợ> <chồng> <quỹ> — nhập số dư ban đầu (1 lần)',
+  '/dieuchinh vợ +2tr · /dieuchinh vợ = 3tr — chỉnh số dư cho khớp tiền thật (không tính thu/chi)',
   '/tietkiem — các hũ · /taohu <tên> [mục tiêu] — tạo hũ · /tietkiemdau <tiền | N chỉ vàng> [hũ] — khai báo tiền / vàng đang để dành',
 ].join('\n');
 

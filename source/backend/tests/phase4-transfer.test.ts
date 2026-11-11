@@ -252,6 +252,8 @@ for (const backend of BACKENDS) {
 
     it('P11: lỗi giữa transaction ở bất kỳ lệnh ghi nào → không còn dòng dở', async () => {
       await seedInitial(env);
+      // Đồng hồ cố định: tin chuyển ngày 04/11, yêu cầu hết hạn sau 7 ngày (không phụ thuộc ngày chạy test)
+      const CLOCK = { now: () => new Date('2026-11-05T03:00:00.000Z') };
       const state = async () => ({
         counts: await snapshotCounts(env.db),
         ct: await count(env.db, 'chuyen_tien_noi_bo'),
@@ -266,15 +268,15 @@ for (const backend of BACKENDS) {
           assert.deepEqual(await state(), before, `${label} failAt=${failAt}`);
         }
       };
-      await runFaulty(5, 'tạo chuyển', (db) => new TransactionService(db).recordFromText(msg(MEMBER_ID.CHONG, 'chuyển vợ 1tr')));
+      await runFaulty(5, 'tạo chuyển', (db) => new TransactionService(db, CLOCK).recordFromText(msg(MEMBER_ID.CHONG, 'chuyển vợ 1tr')));
       const pending = await sendTransfer(env, MEMBER_ID.CHONG, 'chuyển vợ 1tr');
       await runFaulty(4, 'nhận', (db) =>
-        new TransactionService(db).resolveConfirmation(pending.confirmation!.id, MEMBER_ID.VO, { type: 'ACCEPT' }),
+        new TransactionService(db, CLOCK).resolveConfirmation(pending.confirmation!.id, MEMBER_ID.VO, { type: 'ACCEPT' }),
       );
-      await runFaulty(4, 'huỷ chuyển', (db) => new TransferService(db).cancelTransfer(pending.transfer.id, MEMBER_ID.CHONG));
-      await runFaulty(4, 'nộp quỹ', (db) => new TransactionService(db).recordFromText(msg(MEMBER_ID.VO, 'bỏ vào quỹ chung 1tr')));
+      await runFaulty(4, 'huỷ chuyển', (db) => new TransferService(db, CLOCK).cancelTransfer(pending.transfer.id, MEMBER_ID.CHONG));
+      await runFaulty(4, 'nộp quỹ', (db) => new TransactionService(db, CLOCK).recordFromText(msg(MEMBER_ID.VO, 'bỏ vào quỹ chung 1tr')));
       const fund = await sendFund(env, MEMBER_ID.VO, 'bỏ vào quỹ chung 1tr');
-      await runFaulty(2, 'huỷ quỹ', (db) => new TransferService(db).cancelFundMove(fund.fundMove.id, MEMBER_ID.VO));
+      await runFaulty(2, 'huỷ quỹ', (db) => new TransferService(db, CLOCK).cancelFundMove(fund.fundMove.id, MEMBER_ID.VO));
     });
 
     it('P12: thời gian / chủ ngữ / "đã" đứng trước → vẫn là chuyển, ngày đúng', async () => {

@@ -55,4 +55,10 @@ export type BotAction =
       onBlocked?: BotAction;
     }
   | { type: 'edit'; chatId: number; messageId: number; text: string; keyboard?: InlineKeyboard }
-  | { type: 'answer'; callbackQueryId: string; text?: string };
+  | { type: 'answer'; callbackQueryId: string; text?: string }
+  // Ảnh chụp từ trang HTML (Phase 6); chụp lỗi / không có dịch vụ chụp → gửi fallbackText
+  | { type: 'photo'; chatId: number; html: string; width: number; height: number; caption: string; fallbackText: string }
+  // content là hàm → dựng lúc gửi (sau khi đã gửi ảnh: hết CPU giữa chừng thì người nhận vẫn có ảnh / tin chữ)
+  | { type: 'document'; chatId: number; filename: string; content: string | (() => string); caption?: string }
+  // Việc nặng (dựng báo cáo) chạy sau khi webhook đã trả 200; lỗi → gửi onError
+  | { type: 'deferred'; build: () => Promise<BotAction[]>; onError: BotAction };

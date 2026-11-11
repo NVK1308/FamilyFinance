@@ -239,6 +239,12 @@ erDiagram
 - Neon: `temp/neon/08_gia_vang.sql`. Đồng bộ desktop: có trong `syncTablesOrder`.
 - `chuyen_quy_chung` (3.1b) dùng thêm cho **rút quỹ đưa thẳng người kia**: `chieu = RUT`, `thanh_vien_id` = người ghi, `nhom_id` = người nhận (không đổi schema).
 
+### 3.1f. Đánh dấu đã gửi báo cáo tháng — bảng `bao_cao_da_gui` (migration 0007 — bảng thứ 21, bảng vận hành)
+- `ky` ('YYYY-MM'), `thanh_vien_id`, `trang_thai` (`DANG_GUI` / `DA_GUI` / `LOI`), `so_lan`, `loi`; **UNIQUE (ky, thanh_vien_id)**.
+- Cron báo cáo (8h VN ngày 1, chạy lại mỗi giờ tới ngày 3) giữ chỗ bằng `INSERT … ON CONFLICT DO NOTHING`; chỉ gửi lại khi `LOI` hoặc kẹt `DANG_GUI` > 30 phút, tối đa 3 lần. Nhận được ảnh hoặc file → `DA_GUI`.
+- Không đồng bộ desktop (không có trong `syncTablesOrder`). Neon: `temp/neon/09_bao_cao.sql`.
+- `giao_dich` loại `DIEU_CHINH` (TANG/GIAM) ghi qua lệnh `/dieuchinh` (key `api:<update_id hex>`): đổi số dư nhóm, không tính thu/chi.
+
 ### 3.2. Ràng buộc trên bảng `chuyen_tien_noi_bo`
 - `nguoi_chuyen_id <> nguoi_nhan_id`: Không thể tự chuyển cho chính mình.
 - `so_tien > 0`.

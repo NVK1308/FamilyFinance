@@ -1,5 +1,5 @@
 import type { DatabaseAdapter, SqlParam } from '../../src/db/types.ts';
-import { TelegramApiError, type TelegramClient } from '../../src/telegram/client.ts';
+import { TelegramApiError, type HtmlScreenshotter, type TelegramClient } from '../../src/telegram/client.ts';
 import type { InlineKeyboard, TgUpdate } from '../../src/telegram/types.ts';
 import { createWorker, type ClosableDb, type Env } from '../../src/worker.ts';
 import { TELEGRAM_ID } from './phase3-env.ts';
@@ -11,12 +11,16 @@ export const VO = TELEGRAM_ID.VO;
 export const STRANGER = 999_999;
 
 export interface SentCall {
-  method: 'send' | 'edit' | 'answer';
+  method: 'send' | 'edit' | 'answer' | 'photo' | 'document';
   chatId?: number;
   messageId?: number;
   text?: string;
   keyboard?: InlineKeyboard;
   callbackQueryId?: string;
+  // photo / document
+  caption?: string;
+  filename?: string;
+  bytes?: number;
 }
 
 // Client giả: ghi lại lệnh gửi; failFor[chatId] → ném lỗi khi gửi cho chat đó
@@ -41,10 +45,33 @@ export class FakeTelegram implements TelegramClient {
     if (this.failAll) throw this.failAll;
     this.calls.push({ method: 'answer', callbackQueryId, ...(text ? { text } : {}) });
   }
+  async sendPhoto(chatId: number, png: Uint8Array, caption: string): Promise<void> {
+    if (this.failAll) throw this.failAll;
+    const err = this.failFor.get(chatId);
+    if (err) throw err;
+    this.calls.push({ method: 'photo', chatId, caption, bytes: png.length });
+  }
+  async sendDocument(chatId: number, filename: string, content: Uint8Array, _mimeType: string, caption?: string): Promise<void> {
+    if (this.failAll) throw this.failAll;
+    const err = this.failFor.get(chatId);
+    if (err) throw err;
+    this.calls.push({ method: 'document', chatId, filename, bytes: content.length, text: new TextDecoder().decode(content), ...(caption ? { caption } : {}) });
+  }
   take(): SentCall[] {
     const out = this.calls;
     this.calls = [];
     return out;
+  }
+}
+
+// Chụp ảnh giả: trả PNG giả, đếm số lần chụp; fail → ném lỗi (giả lập 429 / hết lượt)
+export class FakeScreenshotter implements HtmlScreenshotter {
+  shots: string[] = [];
+  fail: Error | null = null;
+  async screenshot(html: string): Promise<Uint8Array> {
+    if (this.fail) throw this.fail;
+    this.shots.push(html);
+    return new Uint8Array([137, 80, 78, 71]);
   }
 }
 
@@ -101,14 +128,17 @@ export interface BotHarness {
   post(update: unknown, opts?: { secret?: string | null; env?: Env; raw?: string }): Promise<Response>;
   text(from: number, text: string, extra?: Record<string, unknown>): Promise<{ res: Response; update: TgUpdate }>;
   click(from: number, data: string, messageId?: number | null): Promise<Response>;
-  cron(): Promise<void>;
+  shooter: FakeScreenshotter;
+  // Mặc định lịch job hết hạn; báo cáo tháng: REPORT_CRON
+  cron(expr?: string): Promise<void>;
 }
 
 export function createHarness(inner: DatabaseAdapter, startIso = '2026-11-05T03:00:00.000Z'): BotHarness {
   const tg = new FakeTelegram();
   const db = new TestDb(inner);
   let now = new Date(startIso);
-  const worker = createWorker({ dbFactory: () => db, telegramFactory: () => tg, now: () => now });
+  const shooter = new FakeScreenshotter();
+  const worker = createWorker({ dbFactory: () => db, telegramFactory: () => tg, screenshotFactory: () => shooter, now: () => now });
 
   async function post(update: unknown, opts: { secret?: string | null; env?: Env; raw?: string } = {}): Promise<Response> {
     const headers: Record<string, string> = { 'content-type': 'application/json' };
@@ -126,6 +156,7 @@ export function createHarness(inner: DatabaseAdapter, startIso = '2026-11-05T03:
 
   return {
     tg,
+    shooter,
     db,
     setNow: (iso) => {
       now = new Date(iso);
@@ -160,9 +191,9 @@ export function createHarness(inner: DatabaseAdapter, startIso = '2026-11-05T03:
       };
       return post(update);
     },
-    async cron() {
+    async cron(expr = '0 18 * * *') {
       const pending: Promise<unknown>[] = [];
-      await worker.scheduled(null, ENV, { waitUntil: (p) => pending.push(p) });
+      await worker.scheduled({ cron: expr }, ENV, { waitUntil: (p) => pending.push(p) });
       await Promise.all(pending);
     },
   };

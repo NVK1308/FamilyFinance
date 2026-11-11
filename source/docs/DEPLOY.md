@@ -37,7 +37,7 @@ Script lần lượt: kiểm công cụ + `wrangler login` → tạo `wrangler.t
 ```powershell
 Copy-Item wrangler.toml.example wrangler.toml   # wrangler.toml không commit
 ```
-Trong `wrangler.toml` đổi `ENVIRONMENT = "production"` (tắt `/api/parser/preview`). Giữ khối `[triggers] crons = ["0 18 * * *"]` (1h sáng giờ VN).
+Trong `wrangler.toml` đổi `ENVIRONMENT = "production"` (tắt `/api/parser/preview`). Khối `[triggers]` phải là `crons = ["0 18 * * *", "0 1-14 1-3 * *"]`: job hết hạn 1h sáng VN + báo cáo tháng 8h sáng VN ngày 1 (chạy bắt bù tới ngày 3, mỗi người chỉ nhận 1 lần). `deploy.ps1` bước 2 tự thêm lịch báo cáo nếu thiếu.
 
 Tạo secret webhook ngẫu nhiên (chỉ chữ, số, `_`, `-`; 32–64 ký tự), ví dụ:
 ```powershell
@@ -51,6 +51,21 @@ npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
 npx wrangler secret put NEON_DATABASE_URL
 ```
 Thiếu `TELEGRAM_WEBHOOK_SECRET` → webhook từ chối mọi request (401).
+
+**Ảnh báo cáo tháng (Phase 6, tuỳ chọn)** — chụp trang HTML bằng Cloudflare Browser Rendering (gói Workers Free dùng được: 10 phút / ngày, 1 lần / 10 giây; báo cáo tháng chỉ chụp 1 ảnh dùng chung):
+1. Cloudflare Dashboard → My Profile → API Tokens → Create Token → Custom: quyền **Account · Browser Rendering · Edit**, chọn đúng account.
+2. Account ID: Dashboard → Workers & Pages → góc phải (Account ID).
+```powershell
+npx wrangler secret put CF_ACCOUNT_ID
+npx wrangler secret put CF_BROWSER_TOKEN
+```
+Thiếu 2 secret này → báo cáo vẫn gửi file HTML, ảnh thay bằng tin chữ tóm tắt.
+
+Lưu ý (gặp khi deploy 11/11/2026):
+- Phải nhập bằng `wrangler secret put` (hoặc loại **Secret** trên giao diện). Biến loại **Text** tạo trên giao diện bị xoá khi `wrangler deploy`. Kiểm tra: `npx wrangler secret list` (chỉ hiện tên).
+- PowerShell chặn `npx.ps1` ("running scripts is disabled") → dùng `npx.cmd wrangler …`; chạy script deploy: `powershell -ExecutionPolicy Bypass -File .\scripts\deploy.ps1 …`.
+- Token tạo ở **Manage account → Account API tokens** có tiền tố `cfat_` (~53 ký tự) — kiểm tra bằng `/accounts/<account_id>/tokens/verify` (địa chỉ `/user/tokens/verify` luôn trả 401 với loại này).
+- Log `Browser Rendering 401 … code 10000 Authentication error` = token thiếu quyền **Browser Rendering (Browser Run) – Edit**. Thêm quyền vào token (giá trị token không đổi, không cần nhập lại secret). Token chỉ nên có đúng quyền này.
 
 ## 4. Deploy
 

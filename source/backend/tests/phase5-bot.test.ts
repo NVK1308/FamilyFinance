@@ -511,7 +511,7 @@ for (const backend of BACKENDS) {
       assert.match(calls[0]?.text ?? '', /✅ Thu 1\.000\.000đ · Nợ của anh/);
       assert.match(calls[1]?.text ?? '', /✅ Chi 1\.000\.000đ · Nợ của anh/);
       assert.match(calls[2]?.text ?? '', /✅ Lãi vay 200\.000đ/);
-      assert.match(calls[3]?.text ?? '', /chưa làm được qua chat/);
+      assert.match(calls[3]?.text ?? '', /Điều chỉnh số dư dùng lệnh: \/dieuchinh/);
       assert.equal(await count(env.db, 'giao_dich'), 3);
     });
 

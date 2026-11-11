@@ -1,4 +1,6 @@
-import { CONFIRMATION_STATUS, CONFIRMATION_TYPE, DEFAULT_JAR_ID, type MemberId } from '../config/constants.ts';
+import { CONFIRMATION_STATUS, CONFIRMATION_TYPE, DEFAULT_JAR_ID, type MemberId, type MoneyHolderId } from '../config/constants.ts';
+import type { InlineKeyboard } from '../telegram/types.ts';
+import { buildReport, previousMonth, reportActions } from './report.ts';
 import {
   hasCompletedTransactionsFrom,
   listActiveInitialBalances,
@@ -32,6 +34,7 @@ import {
   transferReceiverText,
   formatGold,
   goldPriceLine,
+  transactionLine,
   savingsNoticeText,
   savingsText,
 } from './replies.ts';
@@ -82,6 +85,10 @@ export async function runCommand(
       return declareSavings(ctx, member, chatId, args, updateId);
     case 'giavang':
       return goldMarketPrice(ctx, member, chatId, args, updateId);
+    case 'dieuchinh':
+      return adjustBalance(ctx, member, chatId, args, updateId);
+    case 'baocao':
+      return monthlyReport(ctx, chatId, args);
     default:
       return reply(`Không có lệnh /${name}.\n${HELP_TEXT}`);
   }
@@ -213,6 +220,115 @@ async function declareSavings(
   }
   return actions;
 }
+
+const REPORT_SYNTAX = 'Cú pháp: /baocao (tháng này) · /baocao trước · /baocao 10 · /baocao 10/2025';
+
+// /baocao [trước | 10 | 10/2025]: ảnh tóm tắt + file HTML cho người gõ (báo cáo tự động ngày 1 gửi cả 2 người)
+async function monthlyReport(ctx: BotContext, chatId: number, args: string[]): Promise<BotAction[]> {
+  const today = toVnDate(ctx.now());
+  const [ty, tm] = today.split('-').map(Number) as [number, number];
+  let month: { y: number; m: number } | null = null;
+  for (const word of cleanArgs(args).map((a) => removeVietnameseDiacritics(a.toLowerCase()))) {
+    const num = word.match(/^(\d{1,2})(?:\/(\d{4}))?$/);
+    if ((word === 'truoc' || word === 'qua') && month === null) {
+      month = previousMonth(today);
+    } else if (num && month === null) {
+      const m = Number(num[1]);
+      // "/baocao 12" gõ trong tháng 1 → tháng 12 năm trước
+      const y = num[2] ? Number(num[2]) : m > tm ? ty - 1 : ty;
+      if (m < 1 || m > 12) return [{ type: 'send', chatId, text: `Tháng không hợp lệ.\n${REPORT_SYNTAX}` }];
+      month = { y, m };
+    } else {
+      return [{ type: 'send', chatId, text: `Chưa hiểu "${word}".\n${REPORT_SYNTAX}` }];
+    }
+  }
+  if (month && (month.y > ty || (month.y === ty && month.m > tm))) {
+    return [{ type: 'send', chatId, text: `Tháng chưa tới.\n${REPORT_SYNTAX}` }];
+  }
+  const label = month ? `tháng ${month.m}/${month.y}` : 'tháng này';
+  // Dựng sau khi webhook trả 200 (truy vấn + HTML nặng): Telegram không gửi lại update
+  return [
+    { type: 'send', chatId, text: `⏳ Đang tạo báo cáo ${label}…` },
+    {
+      type: 'deferred',
+      build: async () => reportActions(await buildReport(ctx.db, ctx.now, today, month), [chatId]),
+      onError: { type: 'send', chatId, text: '⚠️ Tạo báo cáo lỗi — thử lại sau ít phút (hoặc dùng /thang).' },
+    },
+  ];
+}
+
+const ADJUST_SYNTAX = [
+  'Cú pháp: /dieuchinh <vợ | chồng | quỹ> <+tiền | -tiền | = số thực tế> [lý do]',
+  '• /dieuchinh vợ +12tr quên khai tiền ngân hàng',
+  '• /dieuchinh vợ = 3tr (vợ thực tế đang có 3tr → bot tự tính phần chênh)',
+  'Điều chỉnh chỉ đổi số dư, không tính vào thu / chi.',
+].join('\n');
+const ADJUST_HOLDER: Record<string, MoneyHolderId> = { vo: 'VO', chong: 'CHONG', quy: 'QUY_CHUNG', 'quy chung': 'QUY_CHUNG' };
+
+// /dieuchinh vợ +12tr [lý do] · /dieuchinh vợ = 3tr: ghi DIEU_CHINH tăng / giảm (số dư khớp tiền thật, không vào thu/chi)
+async function adjustBalance(
+  ctx: BotContext,
+  member: ThanhVienRecord,
+  chatId: number,
+  args: string[],
+  updateId: number | undefined,
+): Promise<BotAction[]> {
+  const send = (text: string, keyboard?: InlineKeyboard): BotAction[] => [{ type: 'send', chatId, text, ...(keyboard ? { keyboard } : {}) }];
+  const memberId = member.id as MemberId;
+  const today = toVnDate(ctx.now());
+  const original = cleanArgs(args).join(' ').normalize('NFC');
+  const ascii = removeVietnameseDiacritics(original.toLowerCase());
+  const m = ascii.match(
+    /^(quy chung|quy|vo|chong)\s*(=|\+|-|con\s+|thuc\s+te\s+)\s*(\d+(?:[.,]\d+)?\s+(?:trieu|tr|k|nghin|ngan|ty)(?=\s|$)|\S+)\s*(.*)$/,
+  );
+  const holder = m ? ADJUST_HOLDER[m[1]!] : undefined;
+  const amount = m ? parseMoneyArg(m[3]!, memberId) : null;
+  if (!m || !holder || amount === null || updateId === undefined) {
+    return send(`Chưa hiểu lệnh.\n${ADJUST_SYNTAX}`);
+  }
+  const before = await ctx.balances.getHolderBalances(today);
+  if (before.status !== 'OK') {
+    return send(NEED_INITIAL);
+  }
+  const setTo = !['+', '-'].includes(m[2]!.trim());
+  const delta = setTo ? amount - before.nhom[holder] : m[2] === '-' ? -amount : amount;
+  if (delta === 0) {
+    return send(`${HOLDER_DISPLAY[holder]} đang đúng ${formatMoney(before.nhom[holder])} — không cần điều chỉnh.`);
+  }
+  // Lý do: phần cuối câu gốc (giữ dấu); bỏ dấu đổi độ dài thì dùng bản không dấu
+  const tail = m[4]!;
+  const reason = (ascii.length === original.length ? original.slice(original.length - tail.length) : tail).trim();
+  const { transaction, duplicate } = await ctx.txs.recordExplicit({
+    // Hàm ghi tường minh cần key api:<hex>; lấy từ update_id → Telegram gửi lại không ghi 2 lần
+    idempotencyKey: `api:${updateId.toString(16).padStart(12, '0')}`,
+    loai: 'DIEU_CHINH',
+    soTien: Math.abs(delta),
+    nguoiTaoId: memberId,
+    nguoiGiuTienId: holder,
+    chieuDieuChinh: delta > 0 ? 'TANG' : 'GIAM',
+    moTa: `Điều chỉnh số dư${reason ? `: ${reason}` : ''} (/dieuchinh)`,
+    ngayGiaoDich: today,
+  });
+  const after = await ctx.balances.getHolderBalances(today);
+  const afterAmount = after.status === 'OK' ? after.nhom[holder] : before.nhom[holder] + delta;
+  const text = [
+    `✅ ${transactionLine(transaction, null)}`,
+    `${HOLDER_DISPLAY[holder]}: ${formatMoney(before.nhom[holder])} → ${formatMoney(afterAmount)}`,
+    'Không tính vào thu / chi.',
+  ].join('\n');
+  const actions = send(text, cancelButton('gd', transaction.id));
+  const other = duplicate ? null : await memberChatId(ctx.db, otherMember(memberId));
+  if (other !== null) {
+    actions.push({
+      type: 'send',
+      chatId: other,
+      text: `ℹ️ ${memberName(memberId)} điều chỉnh ${HOLDER_DISPLAY[holder].toLowerCase()} ${delta > 0 ? '+' : '−'}${formatMoney(Math.abs(delta))}${reason ? ` (${reason})` : ''}.`,
+    });
+  }
+  return actions;
+}
+
+const HOLDER_DISPLAY: Record<MoneyHolderId, string> = { VO: 'Tiền của vợ', CHONG: 'Tiền của chồng', QUY_CHUNG: 'Quỹ chung', CHUA_XAC_DINH: 'Chưa rõ người giữ' };
 
 const GOLD_PRICE_SYNTAX = 'Cú pháp: /giavang 15tr (giá 1 chỉ) · /giavang 150tr lượng · /giavang (xem giá đang dùng)';
 

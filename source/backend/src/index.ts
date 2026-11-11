@@ -1,5 +1,5 @@
 import { NeonWsAdapter } from './db/neon-ws-adapter.ts';
-import { HttpTelegramClient } from './telegram/client.ts';
+import { CloudflareScreenshotter, HttpTelegramClient } from './telegram/client.ts';
 import { createWorker, type Env } from './worker.ts';
 
 export type { Env } from './worker.ts';
@@ -13,6 +13,8 @@ const worker = createWorker({
     return new NeonWsAdapter(env.NEON_DATABASE_URL);
   },
   telegramFactory: (env: Env) => (env.TELEGRAM_BOT_TOKEN ? new HttpTelegramClient(env.TELEGRAM_BOT_TOKEN) : null),
+  screenshotFactory: (env: Env) =>
+    env.CF_ACCOUNT_ID && env.CF_BROWSER_TOKEN ? new CloudflareScreenshotter(env.CF_ACCOUNT_ID, env.CF_BROWSER_TOKEN) : null,
 });
 
 export default {

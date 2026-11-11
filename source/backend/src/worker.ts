@@ -3,9 +3,11 @@ import { createBotContext, handleFailure, handleUpdate } from './bot/handler.ts'
 import { formatDay, formatMoney, memberName } from './bot/replies.ts';
 import type { DatabaseAdapter } from './db/types.ts';
 import { parseVietnameseFinanceMessage } from './parser/index.ts';
-import { constantTimeEqual } from './services/common.ts';
+import { buildReport, previousMonth, reportActions } from './bot/report.ts';
+import { claimReportSend, finishReportSend } from './db/repositories/report-repository.ts';
+import { constantTimeEqual, newId, toVnDate } from './services/common.ts';
 import { ExpiryService } from './services/expiry-service.ts';
-import { runBotActions, type TelegramClient } from './telegram/client.ts';
+import { runBotActions, type HtmlScreenshotter, type TelegramClient } from './telegram/client.ts';
 import type { BotAction, TgUpdate } from './telegram/types.ts';
 
 export interface Env {
@@ -15,6 +17,9 @@ export interface Env {
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
   NEON_DATABASE_URL?: string;
+  // Phase 6: Cloudflare Browser Rendering (chụp ảnh báo cáo); thiếu → gửi tin chữ thay ảnh
+  CF_ACCOUNT_ID?: string;
+  CF_BROWSER_TOKEN?: string;
 }
 
 export interface WorkerContext {
@@ -28,8 +33,16 @@ export interface WorkerDeps {
   dbFactory(env: Env): ClosableDb;
   // null = thiếu token → không gửi được
   telegramFactory(env: Env): TelegramClient | null;
+  // null = không chụp được ảnh (gửi tin chữ thay)
+  screenshotFactory?(env: Env): HtmlScreenshotter | null;
   now?: () => Date;
 }
+
+// Lịch cron (wrangler.toml [triggers] crons): job hết hạn 1h sáng VN; báo cáo tháng 08:00 VN ngày 1, chạy bắt bù tới 21:00 ngày 3
+export const EXPIRY_CRON = '0 18 * * *';
+export const REPORT_CRON = '0 1-14 1-3 * *';
+// Lần gửi trước kẹt ở DANG_GUI quá lâu (Worker bị dừng giữa chừng) → cho gửi lại
+const REPORT_STALE_MS = 30 * 60_000;
 
 const EXPIRY_BATCH = 50;
 const EXPIRY_MAX_BATCHES = 20;
@@ -64,7 +77,7 @@ export function createWorker(deps: WorkerDeps) {
             console.error('Thiếu TELEGRAM_BOT_TOKEN, bỏ gửi tin');
           }
           if (client) {
-            await runBotActions(client, actions);
+            await runBotActions(client, actions, deps.screenshotFactory?.(env) ?? null);
           }
         } finally {
           await db.close().catch((e: unknown) => console.error('Đóng DB lỗi', e));
@@ -150,6 +163,58 @@ export function createWorker(deps: WorkerDeps) {
     }
   }
 
+  // Ngày 1–3 hằng tháng: gửi báo cáo tháng trước cho vợ + chồng; mỗi người đúng 1 lần (bao_cao_da_gui)
+  async function runMonthlyReport(env: Env): Promise<void> {
+    const db = deps.dbFactory(env);
+    try {
+      const current = now();
+      const nowIso = current.toISOString();
+      const today = toVnDate(current);
+      const month = previousMonth(today);
+      const ky = `${month.y}-${String(month.m).padStart(2, '0')}`;
+      const members = await db.query<{ id: string; telegram_user_id: unknown }>(
+        `SELECT id, telegram_user_id FROM thanh_vien
+         WHERE is_active = TRUE AND deleted_at IS NULL AND vai_tro IN ('VO', 'CHONG') AND telegram_user_id IS NOT NULL ORDER BY id`,
+      );
+      const staleBeforeIso = new Date(current.getTime() - REPORT_STALE_MS).toISOString();
+      const claimed: Array<{ id: string; chatId: number }> = [];
+      for (const m of members) {
+        if (await claimReportSend(db, { id: newId('BC'), ky, thanhVienId: m.id, nowIso, staleBeforeIso })) {
+          claimed.push({ id: m.id, chatId: Number(m.telegram_user_id) });
+        }
+      }
+      if (claimed.length === 0) {
+        return;
+      }
+      const client = deps.telegramFactory(env);
+      let results: boolean[] = [];
+      let failure: string | null = null;
+      try {
+        if (!client) throw new Error('Thiếu TELEGRAM_BOT_TOKEN');
+        const data = await buildReport(db, now, today, month);
+        results = await runBotActions(client, reportActions(data, claimed.map((c) => c.chatId)), deps.screenshotFactory?.(env) ?? null);
+      } catch (error) {
+        failure = error instanceof Error ? error.message : String(error);
+        console.error(`Báo cáo tháng ${ky} lỗi`, failure);
+      }
+      // reportActions: 2 lệnh / người (ảnh hoặc tin chữ thay, rồi file). Nhận được 1 trong 2 → coi là đã gửi
+      // (gửi lại cả 2 sẽ trùng ảnh); không nhận được gì → LOI, giờ sau gửi lại (tối đa REPORT_MAX_ATTEMPTS lần)
+      for (const [i, c] of claimed.entries()) {
+        const ok = failure === null && (results[i * 2] === true || results[i * 2 + 1] === true);
+        await finishReportSend(db, {
+          ky,
+          thanhVienId: c.id,
+          status: ok ? 'DA_GUI' : 'LOI',
+          error: ok ? null : (failure ?? 'Gửi Telegram lỗi').slice(0, 500),
+          nowIso: now().toISOString(),
+        });
+      }
+      console.log(`Báo cáo tháng ${ky}: gửi ${claimed.length} người`);
+    } finally {
+      await db.close().catch((e: unknown) => console.error('Đóng DB lỗi', e));
+    }
+  }
+
   return {
     async fetch(request: Request, env: Env, ctx: WorkerContext): Promise<Response> {
       const url = new URL(request.url);
@@ -182,8 +247,12 @@ export function createWorker(deps: WorkerDeps) {
       return notFound();
     },
 
-    // Cron 0 18 * * * (UTC) = 1h sáng giờ VN (Q8)
-    async scheduled(_controller: unknown, env: Env, ctx: WorkerContext): Promise<void> {
+    // Rẽ nhánh theo lịch: REPORT_CRON → báo cáo tháng; còn lại (EXPIRY_CRON) → job hết hạn
+    async scheduled(controller: { cron?: string } | null, env: Env, ctx: WorkerContext): Promise<void> {
+      if (controller?.cron === REPORT_CRON) {
+        ctx.waitUntil(runMonthlyReport(env).catch((e: unknown) => console.error('Job báo cáo tháng lỗi', e)));
+        return;
+      }
       ctx.waitUntil(runExpiry(env).catch((e: unknown) => console.error('Job hết hạn lỗi', e)));
     },
   };

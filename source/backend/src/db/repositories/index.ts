@@ -8,3 +8,4 @@ export * from './balance-queries.ts';
 export * from './transfer-repository.ts';
 export * from './query-repository.ts';
 export * from './savings-repository.ts';
+export * from './report-repository.ts';

@@ -53,6 +53,8 @@ Vàng: 1 chỉ = 10 phân, 1 lượng = 1 cây = 10 chỉ. Giá trị vàng tín
 | `so sánh tháng này với tháng trước` | So 2 kỳ |
 | `liệt kê chi tiết vợ chi tuần trước` | Từng khoản: người → Thu/Chi → danh mục → ngày (tối đa 31 ngày) |
 | `vàng còn mấy chỉ` · `quỹ y tế còn bao nhiêu` | Số dư hũ / vàng |
+| `/baocao` · `/baocao trước` · `/baocao 10` | Báo cáo tháng: **ảnh tóm tắt** + **file HTML** đầy đủ. Ngày 1 hằng tháng 8h sáng tự gửi báo cáo tháng trước cho cả 2 người |
+| `/dieuchinh vợ +12tr [lý do]` · `/dieuchinh vợ = 3tr` | Chỉnh số dư cho khớp tiền thật (quên khai số dư ban đầu, lệch tiền mặt). Không tính thu/chi; người kia được báo; có nút Huỷ |
 | `/ghichu` · `/help` | Ghi chú nợ · danh sách lệnh |
 
 ## 6. Còn thiếu (cập nhật 10/11/2026)
@@ -61,14 +63,14 @@ Vàng: 1 chỉ = 10 phân, 1 lượng = 1 cây = 10 chỉ. Giá trị vàng tín
 1. **Sửa khoản đã ghi**: hiện chỉ Huỷ rồi nhắn lại.
 2. **Quản lý hũ**: đổi tên / ẩn / sửa mục tiêu.
 3. **Thống kê nợ**: hỏi nợ → "chưa hỗ trợ"; ghi chú nợ không vào số dư.
-4. **Điều chỉnh số dư qua chat** (khi lệch với tiền thật).
+4. ✅ **Điều chỉnh số dư qua chat**: `/dieuchinh` (đã code 11/11).
 
 **Đã chốt 10/11**
 
 5. ~~Đổi tiền hũ ↔ vàng trong 1 tin~~ — **không làm**, giữ nhắn 2 tin.
 6. ✅ `/giavang` cập nhật giá vàng thị trường (đã code).
 7. ✅ Chuyển từ quỹ chung thẳng cho vợ/chồng (đã code).
-8. ⏳ **Báo cáo tháng** (Phase 6): ngày 1 hằng tháng gửi về Telegram **ảnh tóm tắt** (xem nhanh) + **file HTML** (đầy đủ); `/baocao` khi cần — đang lập plan. Sau đó: đồng bộ app máy tính (Phase 7), khoá kỳ đã chốt (Phase 8).
+8. ✅ **Báo cáo tháng** (Phase 6, đã code 11/11): ngày 1 hằng tháng 8h gửi về Telegram **ảnh tóm tắt** + **file HTML**; `/baocao` khi cần. Sau đó: đồng bộ app máy tính (Phase 7), khoá kỳ đã chốt (Phase 8).
 
 **Gợi ý thêm (chưa có trong kế hoạch)**
 
