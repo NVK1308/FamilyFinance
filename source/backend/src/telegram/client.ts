@@ -13,7 +13,7 @@ export class TelegramApiError extends Error {
 }
 
 export interface TelegramClient {
-  sendMessage(chatId: number, text: string, keyboard?: InlineKeyboard): Promise<void>;
+  sendMessage(chatId: number, text: string, keyboard?: InlineKeyboard, forceReply?: string): Promise<void>;
   editMessageText(chatId: number, messageId: number, text: string, keyboard?: InlineKeyboard): Promise<void>;
   answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void>;
   sendPhoto(chatId: number, png: Uint8Array, caption: string): Promise<void>;
@@ -45,8 +45,9 @@ export class HttpTelegramClient implements TelegramClient {
     this.fetchFn = fetchFn;
   }
 
-  async sendMessage(chatId: number, text: string, keyboard?: InlineKeyboard): Promise<void> {
-    await this.call('sendMessage', { chat_id: chatId, text, ...(keyboard ? markup(keyboard) : {}) });
+  async sendMessage(chatId: number, text: string, keyboard?: InlineKeyboard, forceReply?: string): Promise<void> {
+    const reply = forceReply ? { reply_markup: { force_reply: true, input_field_placeholder: forceReply.slice(0, 64) } } : {};
+    await this.call('sendMessage', { chat_id: chatId, text, ...(keyboard ? markup(keyboard) : reply) });
   }
 
   async editMessageText(chatId: number, messageId: number, text: string, keyboard?: InlineKeyboard): Promise<void> {
@@ -142,7 +143,7 @@ async function runOne(
 ): Promise<void> {
   switch (action.type) {
     case 'send':
-      return client.sendMessage(action.chatId, action.text, action.keyboard);
+      return client.sendMessage(action.chatId, action.text, action.keyboard, action.forceReply);
     case 'edit':
       return client.editMessageText(action.chatId, action.messageId, action.text, action.keyboard);
     case 'answer':

@@ -108,7 +108,9 @@ export function createWorker(deps: WorkerDeps) {
       return new Response('ok');
     }
     const db = deps.dbFactory(env);
-    const bot = createBotContext(db, now);
+    // id bot = phần số trước ':' của token (kiểm tin nhắc "✏️ Sửa số tiền" do chính bot gửi)
+    const botId = Number(env.TELEGRAM_BOT_TOKEN?.split(':')[0]);
+    const bot = createBotContext(db, now, Number.isSafeInteger(botId) && botId > 0 ? botId : null);
     let actions: BotAction[];
     try {
       actions = await handleUpdate(bot, update);

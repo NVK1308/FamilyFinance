@@ -354,6 +354,14 @@ const IGNORED_TEXT: Record<string, string> = {
   VANG_CHON_HU: "Vàng đang ở nhiều hũ — ghi rõ hũ, vd 'bán vàng 1 chỉ 15tr từ hũ mua nhà'.",
   VANG_NGUON_KHONG_RO: "Chưa rõ tiền quỹ chung đi đâu — nhắn 'lấy quỹ chung mua vàng 1 chỉ 14tr' hoặc 'bán vàng 1 chỉ 15tr bỏ quỹ chung'.",
   DA_HUY: 'Khoản này đã huỷ.',
+  SUA_QUA_HAN: '⏰ Đã quá 1 ngày kể từ lúc ghi — không sửa được. Huỷ khoản cũ rồi nhắn lại.',
+  SUA_CHI_SO_TIEN: 'Chỉ sửa được số tiền (giữ nguyên phần chữ). Đổi danh mục: bấm nút danh mục; đổi khác: Huỷ rồi nhắn lại.',
+  SUA_SO_TIEN_MO_HO: 'Chưa rõ số tiền mới — nhập 1 số, vd 80k.',
+  SUA_KHONG_PHAI_NGUOI_GHI: 'Chỉ người nhập khoản này mới sửa được.',
+  SUA_LOAI_KHONG_HO_TRO: 'Loại này không sửa được bằng cách này — Huỷ rồi nhắn lại.',
+  SUA_DA_HUY: 'Khoản này đã huỷ — không sửa được.',
+  SUA_DANG_CHO: 'Khoản này đang chờ chọn — chọn bằng nút trước.',
+  SUA_KHONG_TIM_THAY: 'Không tìm thấy khoản cần sửa.',
   HET_HAN: 'Khoản này đã hết hạn.',
   TU_CHOI: 'Khoản này đã bị từ chối.',
   LOI: 'Tin này bị lỗi lúc xử lý — nhắn lại sau.',
@@ -373,6 +381,7 @@ export const HELP_TEXT = [
   'Hỏi:',
   '• tháng này vợ chi bao nhiêu · chi tiền học năm nay',
   '• gia đình còn bao nhiêu · chi theo danh mục tháng trước',
+  'Sửa số tiền (trong 1 ngày, chỉ khoản mình nhập): sửa lại tin đã nhắn, hoặc bấm ✏️ Sửa số tiền dưới tin bot',
   'Lệnh:',
   '/sodu — số dư từng người',
   '/baocao — báo cáo tháng: ảnh tóm tắt + file HTML (/baocao trước · /baocao 10); ngày 1 tự gửi báo cáo tháng trước',
@@ -388,7 +397,28 @@ export const HELP_TEXT = [
 export const SHORT_HELP = "Chưa hiểu tin này. Nhắn kiểu 'tiền ăn 50k', hoặc /help.";
 // Xuất báo cáo HTML chưa có (Phase 6)
 export const QUESTION_TEXT = 'Chưa xuất được báo cáo HTML — tạm dùng /thang, /sodu.';
-export const EDITED_TEXT = 'Sửa tin không đổi bản ghi — bấm Huỷ dưới tin cũ rồi nhắn lại.';
+// Sửa số tiền (12/11): tin nhắc trả lời của nút "✏️ Sửa số tiền" — handler nhận lại theo EDIT_PROMPT + mã
+export const EDIT_PROMPT = '✏️ Nhập số tiền mới';
+export const EDIT_CODE = /\nMã: (GD_[A-Za-z0-9_-]+)\s*$/;
+
+export function editPromptText(tx: GiaoDichRecord, categoryName: string | null): string {
+  return `${EDIT_PROMPT} cho khoản dưới (trả lời tin này, vd 80k):\n${transactionLine(tx, categoryName)}\nMã: ${tx.id}`;
+}
+
+export function editedText(before: GiaoDichRecord, view: string): string {
+  return `✏️ Đã sửa số tiền: ${formatMoney(Number(before.so_tien))} → ${view.replace(/^✅ /, '')}`;
+}
+
+// Báo người kia; khoản tháng trước → nhắc báo cáo tháng đã gửi không tự cập nhật
+export function editNoticeText(before: GiaoDichRecord, after: GiaoDichRecord, categoryName: string | null, by: string, today: string): string {
+  const oldMonth = after.ngay_giao_dich.slice(0, 7) < today.slice(0, 7);
+  const note = oldMonth ? ` (khoản tháng ${Number(after.ngay_giao_dich.slice(5, 7))} — báo cáo tháng đã gửi không tự cập nhật)` : '';
+  return `ℹ️ ${memberName(by)} sửa số tiền: ${formatMoney(Number(before.so_tien))} → ${transactionLine(after, categoryName)}.${note}`;
+}
+
+export function editButtonRow(tx: GiaoDichRecord): InlineKeyboard {
+  return [[{ text: '✏️ Sửa số tiền', callback_data: encodeCallback({ kind: 'sd', id: tx.id }) }]];
+}
 export const ERROR_TEXT = '⚠️ Lỗi khi xử lý tin — nhắn lại sau ít phút.';
 // Lỗi sau khi đã ghi: không bảo nhắn lại (sẽ ghi 2 lần)
 export const DONE_BUT_ERROR_TEXT = '⚠️ Tin đã được ghi nhưng lỗi khi trả lời — đừng nhắn lại, kiểm tra bằng /thang hoặc /cho.';

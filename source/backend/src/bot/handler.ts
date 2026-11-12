@@ -4,6 +4,7 @@ import {
   getCategoryById,
   getMemberByTelegramUserId,
   getMessageByUpdateId,
+  getTransactionById,
   isActiveMember,
   listActiveCategoriesFor,
   updateMessageStatus,
@@ -12,12 +13,13 @@ import type { ChuyenTienNoiBoRecord, DatabaseAdapter, GiaoDichRecord, HuRecord, 
 import { isActionRequest } from '../parser/intent-classifier.ts';
 import { parseQuery } from '../query/query-parser.ts';
 import { BalanceService } from '../services/balance-service.ts';
-import { DomainError } from '../services/common.ts';
+import { DomainError, toVnDate } from '../services/common.ts';
 import { insertIncomingMessage, type IncomingMessage, type RecordOutcome } from '../services/message-outcome.ts';
 import { QueryService } from '../services/query-service.ts';
 import { SavingsService } from '../services/savings-service.ts';
 import { KEYBOARD_EXCLUDED_CATEGORIES, TransactionService } from '../services/transaction-service.ts';
 import { TransferService } from '../services/transfer-service.ts';
+import { EditService, canEditAmount, type EditResult } from '../services/edit-service.ts';
 import type { ParsedQueryOrOtherResult } from '../parser/types.ts';
 import type { BotAction, InlineKeyboard, TgCallbackQuery, TgMessage, TgUpdate } from '../telegram/types.ts';
 import { decodeCallback, type CallbackData } from './callback-data.ts';
@@ -26,8 +28,13 @@ import { memberChatId, otherMember } from './members.ts';
 import { ACTION_HELP, QUERY_HELP, queryAnswerText, remindText, splitTelegramText } from './query-replies.ts';
 import {
   DONE_BUT_ERROR_TEXT,
-  EDITED_TEXT,
+  EDIT_CODE,
+  EDIT_PROMPT,
   ERROR_TEXT,
+  editButtonRow,
+  editNoticeText,
+  editPromptText,
+  editedText,
   QUESTION_TEXT,
   SHORT_HELP,
   cancelButton,
@@ -59,19 +66,25 @@ export interface BotContext {
   balances: BalanceService;
   queries: QueryService;
   savings: SavingsService;
+  edits: EditService;
+  // id bot (phần trước ':' của token) — kiểm tin nhắc sửa đúng do bot này gửi; null = không biết (test)
+  botId: number | null;
 }
 
-export function createBotContext(db: DatabaseAdapter, now: () => Date = () => new Date()): BotContext {
+export function createBotContext(db: DatabaseAdapter, now: () => Date = () => new Date(), botId: number | null = null): BotContext {
   const options = { now };
   const txs = new TransactionService(db, options);
+  const balances = new BalanceService(db, options);
   return {
+    botId,
     db,
     now,
     txs,
     transfers: new TransferService(db, options),
-    balances: new BalanceService(db, options),
+    balances,
     queries: new QueryService(db, options),
     savings: txs.savingsService,
+    edits: new EditService(db, txs.savingsService, balances, options),
   };
 }
 
@@ -93,8 +106,18 @@ function toIncoming(updateId: number, m: TgMessage & { text: string; from: { id:
     chatId: m.chat.id,
     senderTelegramUserId: m.from.id,
     text: m.text,
-    receivedAt: new Date(m.date * 1000).toISOString(),
+    // Tin đã sửa: thời điểm sửa (sắp thứ tự các lần sửa)
+    receivedAt: new Date((m.edit_date ?? m.date) * 1000).toISOString(),
   };
+}
+
+// Trả lời tin nhắc "✏️ Nhập số tiền mới … Mã: GD_…" do chính bot gửi → id giao dịch; không phải → null
+function editTarget(m: TgMessage, botId: number | null): string | null {
+  const r = m.reply_to_message;
+  if (!r?.from?.is_bot || (botId !== null && r.from.id !== botId) || !r.text?.startsWith(EDIT_PROMPT)) {
+    return null;
+  }
+  return r.text.match(EDIT_CODE)?.[1] ?? null;
 }
 
 async function activeMember(db: DatabaseAdapter, telegramUserId: number): Promise<ThanhVienRecord | null> {
@@ -108,8 +131,20 @@ export async function handleUpdate(ctx: BotContext, update: TgUpdate): Promise<B
     return handleCallback(ctx, update.callback_query);
   }
   if (update.edited_message) {
+    // Sửa tin gốc → sửa số tiền khoản đã ghi (chỉ số tiền, người nhập, trong 1 ngày)
     const m = acceptedText(update.edited_message);
-    return m && (await activeMember(ctx.db, m.from.id)) ? [{ type: 'send', chatId: m.chat.id, text: EDITED_TEXT }] : [];
+    const member = m ? await activeMember(ctx.db, m.from.id) : null;
+    if (!m || !member || parseCommand(m.text)) {
+      return [];
+    }
+    const incoming = toIncoming(update.update_id, m);
+    // Sửa lại chính câu trả lời "80k" của nút Sửa → sửa tiếp khoản đó
+    const replyTarget = editTarget(m, ctx.botId);
+    const res = replyTarget ? await ctx.edits.fromReply(incoming, member, replyTarget) : await ctx.edits.fromEditedMessage(incoming, member);
+    if (res.kind === 'NEW_MESSAGE') {
+      return outcomeActions(ctx, member, incoming, await ctx.txs.recordFromText(incoming));
+    }
+    return editActions(ctx, member, m.chat.id, res);
   }
   const m = acceptedText(update.message);
   if (!m) {
@@ -126,6 +161,10 @@ export async function handleUpdate(ctx: BotContext, update: TgUpdate): Promise<B
   if (command) {
     return runCommand(ctx, member, m.chat.id, command.name, command.args, update.update_id);
   }
+  const target = editTarget(m, ctx.botId);
+  if (target) {
+    return editActions(ctx, member, m.chat.id, await ctx.edits.fromReply(incoming, member, target));
+  }
   try {
     return await outcomeActions(ctx, member, incoming, await ctx.txs.recordFromText(incoming));
   } catch (error) {
@@ -141,6 +180,15 @@ export async function handleFailure(ctx: BotContext, update: TgUpdate, error: un
   const detail = (error instanceof Error ? error.message : String(error)).slice(0, 500);
   if (update.callback_query) {
     return [{ type: 'answer', callbackQueryId: update.callback_query.id, text: ERROR_TEXT }];
+  }
+  // Sửa tin lỗi → báo người sửa; lỗi xảy ra sau khi đã ghi (tin của update này đã DA_GHI) → báo đã ghi, đừng làm lại
+  const edited = acceptedText(update.edited_message);
+  if (edited) {
+    if (!(await activeMember(ctx.db, edited.from.id))) {
+      return [];
+    }
+    const done = (await getMessageByUpdateId(ctx.db, update.update_id))?.trang_thai_xu_ly === MESSAGE_STATUS.DA_GHI;
+    return [{ type: 'send', chatId: edited.chat.id, text: done ? DONE_BUT_ERROR_TEXT : ERROR_TEXT }];
   }
   const m = acceptedText(update.message);
   if (!m) {
@@ -159,6 +207,38 @@ export async function handleFailure(ctx: BotContext, update: TgUpdate, error: un
     return target === null;
   });
   return member ? [{ type: 'send', chatId: m.chat.id, text: alreadyDone ? DONE_BUT_ERROR_TEXT : ERROR_TEXT }] : [];
+}
+
+// ---------- Sửa số tiền ----------
+
+async function editActions(ctx: BotContext, member: ThanhVienRecord, chatId: number, res: EditResult): Promise<BotAction[]> {
+  switch (res.kind) {
+    case 'EDITED': {
+      const name = await categoryName(ctx.db, res.after);
+      const view = await transactionView(ctx, res.after, false, res.jar);
+      const warn = [
+        res.canhBaoVuotSoDu ? '⚠️ Số tiền lớn hơn số đang giữ — kiểm tra lại.' : '',
+        res.canhBaoHuAm && res.jar ? `⚠️ Hũ ${res.jar.ten} bị âm — kiểm tra lại.` : '',
+      ].filter(Boolean);
+      const actions: BotAction[] = [{ type: 'send', chatId, text: [editedText(res.before, view.text), ...warn].join('\n'), ...(view.keyboard ? { keyboard: view.keyboard } : {}) }];
+      const other = await memberChatId(ctx.db, otherMember(member.id));
+      if (other !== null) {
+        actions.push({ type: 'send', chatId: other, text: editNoticeText(res.before, res.after, name, member.id, toVnDate(ctx.now())) });
+      }
+      return actions;
+    }
+    case 'REPLAY': {
+      // Telegram gửi lại bản sửa đã áp: nhắc lại kết quả hiện tại (không báo người kia lần nữa)
+      const view = await transactionView(ctx, res.transaction, false);
+      return [{ type: 'send', chatId, text: `✏️ Đã sửa: ${view.text.replace(/^✅ /, '')}`, ...(view.keyboard ? { keyboard: view.keyboard } : {}) }];
+    }
+    case 'REJECTED':
+      return [{ type: 'send', chatId, text: ignoredText(res.reason) }];
+    case 'UNCHANGED':
+      return [{ type: 'send', chatId, text: 'Số tiền không đổi.' }];
+    default:
+      return [];
+  }
 }
 
 // ---------- Trả lời kết quả ghi tin nhắn ----------
@@ -181,12 +261,14 @@ async function transactionView(
   if (tx.trang_thai !== 'HOAN_TAT') {
     return { text };
   }
+  // Còn trong 1 ngày → thêm nút "✏️ Sửa số tiền"
+  const editRow = canEditAmount(tx, ctx.now()) ? editButtonRow(tx) : [];
   if (chonDanhMuc && (tx.loai_giao_dich === 'THU' || tx.loai_giao_dich === 'CHI')) {
     const categories = await listActiveCategoriesFor(db, tx.loai_giao_dich, KEYBOARD_EXCLUDED_CATEGORIES);
     // Chi trả từ hũ: chỉ đổi danh mục trong loại Chi, không có nút đổi sang Thu
-    return { text, keyboard: categoryKeyboard(tx, categories, hu === null) };
+    return { text, keyboard: [...categoryKeyboard(tx, categories, hu === null), ...editRow] };
   }
-  return { text, keyboard: cancelButton('gd', tx.id) };
+  return { text, keyboard: [...cancelButton('gd', tx.id), ...editRow] };
 }
 
 const RECEIVED_WORDS = /^(đã nhận|da nhan|nhận rồi|nhan roi|đã nhận rồi|da nhan roi|ok đã nhận)\.?$/i;
@@ -382,6 +464,20 @@ async function runCallback(
       const view = await transactionView(ctx, res.transaction, data.kind === 'lt');
       const note = res.transaction.trang_thai === 'DA_HUY' ? 'Khoản này đã huỷ.' : res.changed ? 'Đã đổi' : undefined;
       return [answer(note), ...edit(view.text, view.keyboard)];
+    }
+    case 'sd': {
+      // Nút "✏️ Sửa số tiền" → gửi tin nhắc, người dùng trả lời bằng số tiền mới
+      const tx = await getTransactionById(ctx.db, data.id);
+      if (!tx || tx.nguoi_tao_id !== me) {
+        return [answer('Chỉ người nhập khoản này mới sửa được.')];
+      }
+      if (!canEditAmount(tx, ctx.now())) {
+        return [answer(tx.trang_thai === 'DA_HUY' ? 'Khoản này đã huỷ.' : 'Đã quá 1 ngày — không sửa được.')];
+      }
+      return [
+        answer(),
+        { type: 'send', chatId: Number(member.telegram_user_id), text: editPromptText(tx, await categoryName(ctx.db, tx)), forceReply: 'vd 80k' },
+      ];
     }
     case 'gd': {
       const res = await ctx.txs.cancelTransaction(data.id, me, 'Huỷ qua bot', { chiNguoiTao: true });

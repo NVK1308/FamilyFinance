@@ -17,6 +17,7 @@ export interface SentCall {
   text?: string;
   keyboard?: InlineKeyboard;
   callbackQueryId?: string;
+  forceReply?: string;
   // photo / document
   caption?: string;
   filename?: string;
@@ -30,11 +31,11 @@ export class FakeTelegram implements TelegramClient {
   failAll: Error | null = null;
   editError: TelegramApiError | null = null;
 
-  async sendMessage(chatId: number, text: string, keyboard?: InlineKeyboard): Promise<void> {
+  async sendMessage(chatId: number, text: string, keyboard?: InlineKeyboard, forceReply?: string): Promise<void> {
     if (this.failAll) throw this.failAll;
     const err = this.failFor.get(chatId);
     if (err) throw err;
-    this.calls.push({ method: 'send', chatId, text, ...(keyboard ? { keyboard } : {}) });
+    this.calls.push({ method: 'send', chatId, text, ...(keyboard ? { keyboard } : {}), ...(forceReply ? { forceReply } : {}) });
   }
   async editMessageText(chatId: number, messageId: number, text: string, keyboard?: InlineKeyboard): Promise<void> {
     if (this.failAll) throw this.failAll;

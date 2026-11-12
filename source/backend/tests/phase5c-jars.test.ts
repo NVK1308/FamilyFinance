@@ -157,7 +157,7 @@ for (const backend of BACKENDS) {
       const { update, calls } = await say(VO, 'khám bệnh 2tr lấy từ quỹ y tế');
       const mine = sentTo(calls, VO)[0];
       assert.equal(mine?.text, '✅ Chi 2.000.000đ · Y tế · vợ trả · 05/11 · từ hũ Y tế');
-      assert.deepEqual(buttons(mine).map((b) => b.data.split(':')[0]), ['gd']);
+      assert.deepEqual(buttons(mine).map((b) => b.data.split(':')[0]), ['gd', 'sd']);
       assert.equal(await voCash(), 5_000_000);
       assert.equal(await jarTien('y te'), 8_000_000);
       assert.match(await reply(VO, '/thang'), /• Chi: 2\.000\.000đ/);

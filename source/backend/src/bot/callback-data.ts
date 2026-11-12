@@ -6,7 +6,8 @@ export type CallbackData =
   | { kind: 'gd'; id: string } // huỷ giao dịch
   | { kind: 'ct'; id: string } // huỷ chuyển tiền
   | { kind: 'qc'; id: string } // huỷ dòng quỹ chung
-  | { kind: 'hk'; id: string }; // huỷ dòng hũ tiết kiệm
+  | { kind: 'hk'; id: string } // huỷ dòng hũ tiết kiệm
+  | { kind: 'sd'; id: string }; // sửa số tiền giao dịch (gửi tin nhắc trả lời)
 
 export const CALLBACK_MAX_BYTES = 64;
 
@@ -43,7 +44,7 @@ const PATTERNS: ReadonlyArray<[RegExp, (m: RegExpMatchArray) => CallbackData]> =
   [new RegExp(`^yc:(${ID}):([AR])$`), (m) => ({ kind: 'yc', id: m[1]!, accept: m[2] === 'A' })],
   [new RegExp(`^dm:(${ID}):([A-Z0-9_]+)$`), (m) => ({ kind: 'dm', id: m[1]!, code: m[2]! })],
   [new RegExp(`^lt:(${ID}):([TC])$`), (m) => ({ kind: 'lt', id: m[1]!, to: m[2] === 'T' ? 'THU' : 'CHI' })],
-  [new RegExp(`^(gd|ct|qc|hk):(${ID})$`), (m) => ({ kind: m[1] as 'gd' | 'ct' | 'qc' | 'hk', id: m[2]! })],
+  [new RegExp(`^(gd|ct|qc|hk|sd):(${ID})$`), (m) => ({ kind: m[1] as 'gd' | 'ct' | 'qc' | 'hk' | 'sd', id: m[2]! })],
 ];
 
 // Dữ liệu lạ / sai dạng → null (bỏ qua)

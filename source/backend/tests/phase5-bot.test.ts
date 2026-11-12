@@ -156,17 +156,16 @@ for (const backend of BACKENDS) {
       assert.equal(h.tg.calls.length, 0);
     });
 
-    it('W4: sửa tin (thành viên) → nhắc Huỷ, DB không đổi; người lạ sửa → im', async () => {
+    it('W4: sửa tin chưa từng ghi gì (thành viên) → im, DB không đổi; người lạ sửa → im (sửa số tiền: phase5g-edit)', async () => {
       const edited = (from: number) => ({
         update_id: 7,
-        edited_message: { message_id: 3, date: 0, chat: { id: from, type: 'private' }, from: { id: from }, text: 'tiền ăn 90k' },
+        edited_message: { message_id: 3, date: 0, edit_date: 10, chat: { id: from, type: 'private' }, from: { id: from }, text: 'tiền ăn 90k' },
       });
       await h.post(edited(VO));
       await h.post(edited(STRANGER));
-      const calls = h.tg.take();
-      assert.equal(calls.length, 1);
-      assert.match(sentTo(calls, VO)[0]?.text ?? '', /bấm Huỷ/);
+      assert.equal(h.tg.take().length, 0);
       assert.equal(await count(env.db, 'tin_nhan_goc'), 0);
+      assert.equal(await count(env.db, 'giao_dich'), 0);
     });
 
     it('W5: người lạ (cả lệnh) → lưu DA_BO_QUA có chat id, không trả lời', async () => {
@@ -182,7 +181,7 @@ for (const backend of BACKENDS) {
       const reply = sentTo(h.tg.take(), CHONG)[0];
       assert.match(reply?.text ?? '', /✅ Chi 50\.000đ · Thức ăn · chồng trả · 05\/11/);
       const cancel = button(reply, 'gd:');
-      assert.equal(buttons(reply).length, 1);
+      assert.deepEqual(buttons(reply).map((b) => b.data.split(':')[0]), ['gd', 'sd']); // Huỷ + ✏️ Sửa số tiền
       assert.ok(new TextEncoder().encode(cancel).length <= 64);
 
       await h.click(VO, cancel);
@@ -237,7 +236,7 @@ for (const backend of BACKENDS) {
       await h.click(CHONG, `dm:${tx.id}:THUC_AN`);
       let calls = h.tg.take();
       assert.match(edits(calls)[0]?.text ?? '', /Chi 30\.000đ · Thức ăn/);
-      assert.deepEqual(buttons(edits(calls)[0]).map((b) => b.data), [`gd:${tx.id}`]);
+      assert.deepEqual(buttons(edits(calls)[0]).map((b) => b.data), [`gd:${tx.id}`, `sd:${tx.id}`]);
       assert.equal((await gd(env)).danh_muc_id, 'DM_THUC_AN');
       await h.click(CHONG, `dm:${tx.id}:THUC_AN`);
       assert.equal(await count(env.db, 'lich_su_chinh_sua', "ly_do = 'DOI_DANH_MUC'"), 1);
@@ -281,7 +280,7 @@ for (const backend of BACKENDS) {
       assert.match(calls[1]?.text ?? '', /Chi khác/);
       assert.match(calls[2]?.text ?? '', /Thu 10\.000\.000đ · Lương/);
       assert.match(calls[2]?.text ?? '', /Lương · vợ nhận/);
-      assert.equal(buttons(calls[2]).length, 1);
+      assert.deepEqual(buttons(calls[2]).map((b) => b.data.split(':')[0]), ['gd', 'sd']);
       assert.match(calls[3]?.text ?? '', /Chi 200\.000đ · Quà tặng/);
       assert.ok(buttons(calls[3]).length > 3);
     });

@@ -19,6 +19,7 @@ Cập nhật: 10/11/2026 (sau Phase 5c-2). Ví dụ theo một tháng của gia 
 | `mua đồ 200k` (chưa rõ) | Bot hỏi bằng nút: Thu/Chi, danh mục |
 | `lấy quỹ chung đi chợ 300k` | Chi, tiền trừ ở quỹ chung |
 | Bấm **Huỷ** dưới tin bot | Xoá khoản nhập nhầm |
+| **Sửa số tiền** (trong 1 ngày, chỉ khoản mình nhập): sửa lại chính tin đã nhắn ("tiền ăn 50k" → "tiền ăn 80k"), hoặc bấm **✏️ Sửa số tiền** dưới tin bot rồi **trả lời** tin nhắc bằng số mới ("80k") | Khoản được sửa tại chỗ, người kia được báo. Chỉ đổi số tiền — đổi danh mục dùng nút danh mục, đổi khác thì Huỷ rồi nhắn lại |
 
 Mỗi khoản ghi xong, người kia nhận tin báo.
 
@@ -60,7 +61,7 @@ Vàng: 1 chỉ = 10 phân, 1 lượng = 1 cây = 10 chỉ. Giá trị vàng tín
 ## 6. Còn thiếu (cập nhật 10/11/2026)
 
 **Thiếu khi dùng hằng ngày — nên làm sớm**
-1. **Sửa khoản đã ghi**: hiện chỉ Huỷ rồi nhắn lại.
+1. ✅ **Sửa số tiền khoản đã ghi** (đã code 12/11): trong 1 ngày, chỉ số tiền, chỉ người nhập.
 2. **Quản lý hũ**: đổi tên / ẩn / sửa mục tiêu.
 3. **Thống kê nợ**: hỏi nợ → "chưa hỗ trợ"; ghi chú nợ không vào số dư.
 4. ✅ **Điều chỉnh số dư qua chat**: `/dieuchinh` (đã code 11/11).

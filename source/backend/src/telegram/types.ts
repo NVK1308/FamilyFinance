@@ -21,6 +21,10 @@ export interface TgMessage {
   forward_origin?: unknown;
   forward_from?: unknown;
   forward_date?: number;
+  // Tin đã sửa: thời điểm sửa (giây)
+  edit_date?: number;
+  // Tin đang trả lời (nút "✏️ Sửa số tiền": trả lời tin nhắc của bot)
+  reply_to_message?: TgMessage;
 }
 
 export interface TgCallbackQuery {
@@ -51,6 +55,8 @@ export type BotAction =
       chatId: number;
       text: string;
       keyboard?: InlineKeyboard;
+      // Mở sẵn ô trả lời tin này (force_reply) với chữ gợi ý; không dùng cùng keyboard
+      forceReply?: string;
       // Người nhận chặn bot / chưa /start (403) → gửi tin này thay
       onBlocked?: BotAction;
     }
