@@ -76,6 +76,8 @@ export function editBlockReason(tx: GiaoDichRecord, now: Date): string | null {
   if (tx.trang_thai === TRANSACTION_STATUS.DA_HUY) return 'SUA_DA_HUY';
   if (tx.trang_thai !== TRANSACTION_STATUS.HOAN_TAT) return 'SUA_DANG_CHO';
   if (!EDITABLE_TYPES.has(tx.loai_giao_dich)) return 'SUA_LOAI_KHONG_HO_TRO';
+  // Lãi vay gắn khoản nợ: sửa số tiền làm lệch lịch sử nợ → Huỷ rồi nhắn lại
+  if (tx.khoan_no_id) return 'SUA_KHOAN_NO';
   if (now.getTime() - Date.parse(String(tx.created_at)) > EDIT_WINDOW_MS) return 'SUA_QUA_HAN';
   return null;
 }
@@ -163,6 +165,9 @@ export class EditService {
       if (before.nguoi_tao_id !== sender.id) return reject('SUA_KHONG_PHAI_NGUOI_GHI');
       const blocked = editBlockReason(before, now);
       if (blocked) return reject(blocked);
+      // Chi trả từ hũ đã xoá: khoá sổ (không đổi số tiền dòng lấy ra của hũ đã ẩn)
+      const linkedJar = await this.savings.jarOfTransaction(tx, before.id);
+      if (linkedJar && !Boolean(linkedJar.is_active)) return reject('SUA_HU_DA_XOA');
       if (parseReason || soTien === null) return reject(parseReason ?? 'SUA_SO_TIEN_MO_HO');
       // Bản sửa cũ đến sau bản mới (Telegram gửi lại sau lỗi tạm thời): đã có lần sửa mới hơn của tin này,
       // hoặc khoản đã đổi sau thời điểm sửa (nút sửa / đổi danh mục) → không quay về số cũ

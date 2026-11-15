@@ -22,6 +22,7 @@ const SCHEMA_STEPS: ReadonlyArray<{ migration: string; seed?: string }> = [
   { migration: '0006_gia_vang.postgres.sql' },
   { migration: '0007_bao_cao_da_gui.postgres.sql' },
   { migration: '0008_khoan_dinh_ky.postgres.sql' },
+  { migration: '0009_xoa_hu_ngan_sach.postgres.sql' },
 ];
 
 // Q12: Postgres thật chạy trong tiến trình (PGlite) để test cùng bộ SQL với Neon

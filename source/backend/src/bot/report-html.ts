@@ -192,6 +192,13 @@ export function fullReportHtml(d: ReportData): string {
             ['<b>Tiền mặt</b>', `<b>${m(b.tong)}</b>`],
             ['Hũ tiết kiệm', esc(assetText(d.savings.tien, d.savings.vangPhan, d.savings.vangGiaTri))],
             ['<b>Tổng tài sản (chưa trừ nợ)</b>', `<b>${m(assets ?? 0)}</b>`],
+            ...(d.debts.dangNo || d.debts.choVay
+              ? [
+                  ['Đang nợ', `<span class="neg">${m(d.debts.dangNo)}</span>`],
+                  ['Cho vay', m(d.debts.choVay)],
+                  ['<b>Tài sản ròng</b>', `<b>${m((assets ?? 0) - d.debts.dangNo + d.debts.choVay)}</b>`],
+                ]
+              : []),
           ],
         ) +
         (d.pending.count > 0 ? `<p class="muted">Đang chờ xác nhận chuyển: ${m(d.pending.total)} (${d.pending.count} khoản) — chưa tính vào số dư.</p>` : '')
@@ -265,6 +272,7 @@ footer{font-size:12px;color:#5b6675;margin:16px 0}
 <div>Chênh lệch<b class="${d.thu - d.chi < 0 ? 'neg' : ''}">${m(d.thu - d.chi)}</b><span class="muted">${d.soKhoan} khoản</span></div>
 </div>
 <section><h2>Chi theo danh mục</h2>${table(['Danh mục', 'Số tiền', '%', 'Khoản', 'Kỳ trước', 'So sánh'], groupRows(d.chiTheoDanhMuc, d.chi, categoryLabel, prevDm))}</section>
+${d.budgets.length ? `<section><h2>Ngân sách tháng</h2>${table(['Danh mục', 'Ngân sách', 'Đã chi', 'Còn lại', '%'], d.budgets.map((b) => [esc(b.ten), `<span class="num">${m(b.limit)}</span>`, `<span class="num">${m(b.spent)}</span>`, `<span class="num${b.spent > b.limit ? ' neg' : ''}">${m(b.limit - b.spent)}</span>`, `${Math.round((b.spent * 100) / b.limit)}%`]))}</section>` : ''}
 <section><h2>Thu theo danh mục</h2>${table(['Danh mục', 'Số tiền', '%', 'Khoản'], groupRows(d.thuTheoDanhMuc, d.thu, categoryLabel))}</section>
 <section><h2>Chi theo người</h2>${table(['Người', 'Số tiền', '%', 'Khoản'], groupRows(d.chiTheoNguoi, d.chi, (g) => memberName(g.key ?? '')))}
 <p class="muted">Trong đó chi từ quỹ chung: ${m(d.chiTuQuyChung)}</p></section>

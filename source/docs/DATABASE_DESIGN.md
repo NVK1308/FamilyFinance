@@ -252,6 +252,13 @@ erDiagram
 - **`nhac_dinh_ky`** (vận hành, không đồng bộ): tin nhắc chung theo **(ky, thanh_vien_id, lan_nhac 1/2)**; `trang_thai` DANG_GUI / DA_GUI / LOI, `ngay_thu` + `so_lan_thu` (tối đa 3 lần / ngày VN), `telegram_message_id` (vẽ lại tin khi bấm), `gui_luc` (mốc tính ngày nhắc lại).
 - Khoản ghi từ định kỳ là `giao_dich` THU/CHI bình thường (vào thu chi như khoản nhắn tay). Neon: `temp/neon/10_khoan_dinh_ky.sql`.
 
+### 3.1h. Xoá hũ + ngân sách (migration 0009 — bảng 26–27, Phase 8)
+- **Xoá hũ** = `hu.is_active = FALSE` (không đặt `deleted_at`: dòng cũ / nút của khoản cũ vẫn tra được hũ). Index tên đổi thành `uq_hu_ten_dang_dung (ten_khong_dau) WHERE deleted_at IS NULL AND is_active` → tạo lại cùng tên được. Lúc xoá ghi các dòng `hu_tiet_kiem` khoá `xh:<huId>:tien | vang-ban | vang-ra | vang-vao` (chuyển vàng giữa 2 hũ: không tiền, không nguồn) — các dòng này và mọi dòng của hũ đã xoá không huỷ / sửa được.
+- **`ngan_sach`** (đồng bộ): `danh_muc_id` (**UNIQUE khi đang chạy**), `so_tien_thang` > 0, `nguoi_tao_id`, `is_active` (bỏ = FALSE), version / xoá mềm.
+- **`ngan_sach_canh_bao`** (vận hành, không đồng bộ): **UNIQUE (ngan_sach_id, ky, muc)** — mốc % đã báo trong tháng; đổi hạn mức → xoá mốc của tháng đó để tính lại.
+- Khoá cấu hình mới `ngan_sach.canh_bao_phan_tram` (seed 80). Neon: `temp/neon/11_xoa_hu_ngan_sach.sql`.
+- **Nợ (Phase 8b)** dùng bảng có sẵn `khoan_no` / `lich_su_no` / `giao_dich` (VAY, TRA_NO, LAI_VAY có `khoan_no_id`, `source_message_id` = tin gốc, key `tg:<update_id>`). `/nodau`: `khoan_no.ghi_chu = 'NO_DAU'`, giao dịch VAY ngày trước mốc số dư ban đầu.
+
 ### 3.2. Ràng buộc trên bảng `chuyen_tien_noi_bo`
 - `nguoi_chuyen_id <> nguoi_nhan_id`: Không thể tự chuyển cho chính mình.
 - `so_tien > 0`.

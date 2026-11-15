@@ -19,6 +19,8 @@ const sqlite0007Path = `${root}/desktop/FamilyFinance.Data/Migrations/0007_bao_c
 const postgres0007Path = `${root}/backend/migrations/0007_bao_cao_da_gui.postgres.sql`;
 const sqlite0008Path = `${root}/desktop/FamilyFinance.Data/Migrations/0008_khoan_dinh_ky.sqlite.sql`;
 const postgres0008Path = `${root}/backend/migrations/0008_khoan_dinh_ky.postgres.sql`;
+const sqlite0009Path = `${root}/desktop/FamilyFinance.Data/Migrations/0009_xoa_hu_ngan_sach.sqlite.sql`;
+const postgres0009Path = `${root}/backend/migrations/0009_xoa_hu_ngan_sach.postgres.sql`;
 const postgresSchemaPath = `${root}/backend/migrations/0001_initial_schema.postgres.sql`;
 const seedPath = `${root}/backend/seeds/0001_seed_reference_data.sql`;
 const contractsPath = `${root}/shared/contracts/domain-contracts.json`;
@@ -236,12 +238,39 @@ for (const t of ['cau_hinh', 'khoan_dinh_ky', 'khoan_dinh_ky_lan']) {
   assert.ok(syncOrder.includes(t), `syncTablesOrder thiếu ${t}`);
 }
 assert.ok(!syncOrder.includes('nhac_dinh_ky'), 'nhac_dinh_ky là bảng vận hành, không đồng bộ');
+
+// 12. Migration 0009: xoá hũ (tên duy nhất chỉ trong hũ đang dùng) + ngan_sach (đồng bộ) + ngan_sach_canh_bao (vận hành) — 27 bảng
+db.exec(fs.readFileSync(sqlite0009Path, 'utf8'));
+db.exec(fs.readFileSync(sqlite0009Path, 'utf8'));
+const tables0009 = db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(r => r.name);
+assert.equal(tables0009.length, 27, `Sau 0009 phải có 27 bảng, có ${tables0009.length}`);
+const insertJar = (id, active) => db.prepare(`
+  INSERT INTO hu (id, ten, ten_khong_dau, is_active, created_at, updated_at) VALUES (?, 'Xe mới', 'xe moi', ?, 'x', 'x')
+`).run(id, active);
+insertJar('HU_A', 0); // hũ đã xoá
+insertJar('HU_B', 1); // tạo lại cùng tên được
+assert.throws(() => insertJar('HU_C', 1), /UNIQUE constraint failed/);
+const insertBudget = (id, active = 1) => db.prepare(`
+  INSERT INTO ngan_sach (id, danh_muc_id, so_tien_thang, nguoi_tao_id, is_active, created_at, updated_at) VALUES (?, 'DM_THUC_AN', 5000000, 'VO', ?, 'x', 'x')
+`).run(id, active);
+insertBudget('NS1');
+assert.throws(() => insertBudget('NS2'), /UNIQUE constraint failed/);
+const warn = (id) => db.prepare(`INSERT INTO ngan_sach_canh_bao (id, ngan_sach_id, ky, muc, created_at) VALUES (?, 'NS1', '2026-11', 80, 'x')`).run(id);
+warn('W1');
+assert.throws(() => warn('W2'), /UNIQUE constraint failed/);
+assert.equal(db.prepare("SELECT COUNT(*) AS c FROM cau_hinh WHERE khoa = 'ngan_sach.canh_bao_phan_tram'").get().c, 1);
+const pg0009 = fs.readFileSync(postgres0009Path, 'utf8');
+const pgTables0009 = [...pg0009.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g)].map(m => m[1]);
+assert.deepEqual([...pgTables, ...pgTables0003, ...pgTables0004, ...pgTables0005, ...pgTables0006, ...pgTables0007, ...pgTables0008, ...pgTables0009].sort(), tables0009, 'Bảng Postgres (0001+0003..0009) phải khớp SQLite');
+assert.ok(syncOrder.includes('ngan_sach') && syncOrder.indexOf('danh_muc') < syncOrder.indexOf('ngan_sach'), 'syncTablesOrder: ngan_sach sau danh_muc');
+assert.ok(!syncOrder.includes('ngan_sach_canh_bao'), 'ngan_sach_canh_bao là bảng vận hành, không đồng bộ');
 assert.ok(syncOrder.indexOf('khoan_dinh_ky') < syncOrder.indexOf('khoan_dinh_ky_lan') && syncOrder.indexOf('giao_dich') < syncOrder.indexOf('khoan_dinh_ky_lan'), 'Thứ tự đồng bộ: cha trước con');
 
 console.log('✅ Schema & Contracts Verification PASSED!');
 console.log('   - Tables verified (PostgreSQL & SQLite 1:1):', tables.length);
 console.log(`   - Seed data verified: ${memberCount} members, ${categoryCount} categories, ${keywordCount} keywords, ${beneficiaryCount} beneficiaries`);
 console.log('   - Integrity constraints verified: positive amount, distinct transfer parties, valid money holder');
+console.log('   - Migration 0009 verified: hũ đã xoá cho tạo lại cùng tên, ngan_sach + ngan_sach_canh_bao (27 bảng), seed khoá ngân sách');
 console.log('   - Migration 0008 verified: cau_hinh + khoan_dinh_ky + khoan_dinh_ky_lan + nhac_dinh_ky (25 bảng), seed 7 khoá, tên khoản duy nhất khi đang chạy');
 console.log('   - Migration 0007 verified: bao_cao_da_gui (21 bảng), 1 dòng / (tháng, người), kỳ YYYY-MM');
 console.log('   - Migration 0006 verified: gia_vang (20 bảng), giá > 0, chạy lại được');

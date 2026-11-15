@@ -16,6 +16,7 @@ export const SETTING_DEFS = {
   'bao_cao.ngay_gui': { min: 1, max: 28, def: 1, moTa: 'Ngày gửi báo cáo tháng trước' },
   'bao_cao.gio_gui': { min: 7, max: 22, def: 20, moTa: 'Giờ gửi báo cáo tháng (giờ VN)' },
   'bao_cao.so_ngay_gui_bu': { min: 1, max: 7, def: 3, moTa: 'Số ngày được gửi bù báo cáo nếu lỗi (tính cả ngày gửi)' },
+  'ngan_sach.canh_bao_phan_tram': { min: 50, max: 99, def: 80, moTa: 'Báo khi chi một danh mục vượt bao nhiêu % ngân sách tháng (vượt 100% luôn báo)' },
 } as const satisfies Record<string, SettingDef>;
 
 export type SettingKey = keyof typeof SETTING_DEFS;

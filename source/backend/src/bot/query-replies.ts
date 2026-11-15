@@ -116,7 +116,7 @@ function balanceLines(a: Extract<QueryAnswer, { kind: 'SO_DU' }>): string[] {
   const holder = a.spec.holder;
   const lines = holder
     ? [`💰 ${holderName(holder)} đến ${formatDay(a.asOf)}: ${formatMoney(b.nhom[holder])}`]
-    : balanceSummaryLines(b.nhom, b.tong, a.asOf, a.hu ?? { tien: 0, vangPhan: 0, vangGiaTri: null });
+    : balanceSummaryLines(b.nhom, b.tong, a.asOf, a.hu ?? { tien: 0, vangPhan: 0, vangGiaTri: null }, a.no);
   if (a.dangChoChuyen && a.dangChoChuyen.count > 0) {
     lines.push(`⏳ Đang chờ xác nhận chuyển: ${formatMoney(a.dangChoChuyen.total)} (${a.dangChoChuyen.count} khoản) — chưa tính vào số dư.`);
   }

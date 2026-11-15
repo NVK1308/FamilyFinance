@@ -265,6 +265,7 @@ function Step5 {
   if ($c.co_gia_vang -lt 1) { Fail 'Neon chua co bang gia_vang (migration 0006) - chay temp/neon/08_gia_vang.sql truoc' }
   if ($c.co_bao_cao -lt 1) { Fail 'Neon chua co bang bao_cao_da_gui (migration 0007) - chay temp/neon/09_bao_cao.sql truoc' }
   if ($c.co_dinh_ky -lt 1) { Fail 'Neon chua co bang khoan dinh ky (migration 0008) - chay temp/neon/10_khoan_dinh_ky.sql truoc' }
+  if ($c.co_ngan_sach -lt 1) { Fail 'Neon chua co bang ngan sach (migration 0009) - chay temp/neon/11_xoa_hu_ngan_sach.sql truoc' }
   if (-not (Confirm-Go 'Ghi 2 secret nay vao Worker?')) { Fail 'Da dung' }
   Set-WorkerSecrets @{ TELEGRAM_BOT_TOKEN = $token; NEON_DATABASE_URL = $neon }
 }

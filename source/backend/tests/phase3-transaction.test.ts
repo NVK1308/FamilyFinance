@@ -188,8 +188,9 @@ for (const backend of BACKENDS) {
       assert.equal(await count(env.db, 'giao_dich'), 0);
     });
 
-    it('T8 (Phase 5, Q6): "vay ngân hàng 10tr" → ghi chú nợ, không giao dịch, không yêu cầu', async () => {
-      const out = await env.txs.recordFromText(msg(MEMBER_ID.CHONG, 'vay ngân hàng 10tr'));
+    // Phase 8b: "vay ngân hàng 10tr" giờ ghi nợ thật (phase8b-debt); câu nợ không rõ chiều / đối tác vẫn là ghi chú
+    it('T8 (Phase 5, Q6): "nợ ngân hàng 10tr" → ghi chú nợ, không giao dịch, không yêu cầu', async () => {
+      const out = await env.txs.recordFromText(msg(MEMBER_ID.CHONG, 'nợ ngân hàng 10tr'));
       assert.equal(out.kind, 'IGNORED');
       if (out.kind !== 'IGNORED') return;
       assert.equal(out.reason, 'GHI_CHU_NO');

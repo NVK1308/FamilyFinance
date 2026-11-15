@@ -6,6 +6,7 @@ import {
   CONFIRMATION_STATUS,
   CONFIRMATION_TYPE,
   DEBT_CHANGE_TYPE,
+  LOAN_DIRECTION,
   MESSAGE_INTENT,
   MESSAGE_STATUS,
   TABLE_NAME,
@@ -43,8 +44,11 @@ import type {
   DatabaseAdapter,
   GiaoDichRecord,
   HuRecord,
+  KhoanNoRecord,
+  ThanhVienRecord,
   YeuCauXacNhanRecord,
 } from '../db/types.ts';
+import { detectDebt, mayBeDebt, partnerKeyOf, type DebtIntent } from '../parser/debt-detector.ts';
 import { parseVietnameseFinanceMessage } from '../parser/index.ts';
 import type { ParsedTransactionResult } from '../parser/types.ts';
 import {
@@ -59,7 +63,7 @@ import {
   toVnDate,
   type ServiceOptions,
 } from './common.ts';
-import { assertMoneyHolder, recomputeLoan } from './debt-service.ts';
+import { DebtService, assertMoneyHolder, recomputeLoan } from './debt-service.ts';
 import {
   ignoreMessage,
   insertIncomingMessage,
@@ -326,12 +330,18 @@ export class TransactionService {
   private readonly now: () => Date;
   private readonly transfers: TransferService;
   private readonly savings: SavingsService;
+  private readonly debts: DebtService;
 
   constructor(db: DatabaseAdapter, options?: ServiceOptions) {
     this.db = db;
     this.now = resolveClock(options);
     this.transfers = new TransferService(db, options);
     this.savings = new SavingsService(db, options);
+    this.debts = new DebtService(db, options);
+  }
+
+  get debtService(): DebtService {
+    return this.debts;
   }
 
   // Dùng chung 1 SavingsService với bot (danh sách tên hũ chỉ đọc 1 lần mỗi update)
@@ -345,6 +355,15 @@ export class TransactionService {
     const member = await getMemberByTelegramUserId(this.db, msg.senderTelegramUserId);
     if (!isActiveMember(member)) {
       return this.recordIgnored(msg, member ? 'NGUOI_GUI_KHONG_ACTIVE' : 'NGUOI_GUI_KHONG_CO');
+    }
+    // Phase 8b: câu nợ có cấu trúc (có từ vay / nợ, hoặc đối tác đang có khoản mở) → ghi nợ thật
+    if (mayBeDebt(msg.text)) {
+      const open = await this.debts.listOpen();
+      const keys = (dir: string) => open.filter((l) => l.chieu_no === dir).map((l) => partnerKeyOf(l.doi_tac));
+      const intent = detectDebt(msg.text, member.id as MemberId, { borrow: keys(LOAN_DIRECTION.DI_VAY), lend: keys(LOAN_DIRECTION.CHO_VAY) });
+      if (intent) {
+        return this.recordDebt(msg, intent, member);
+      }
     }
     const parsed = parseVietnameseFinanceMessage(msg.text, {
       senderId: member.id,
@@ -365,6 +384,63 @@ export class TransactionService {
       return { kind: 'NOT_TRANSACTION', parsed };
     }
     return this.recordFromParsed(msg, parsed);
+  }
+
+  // Phase 8b: ghi nợ cùng transaction với tin gốc (key tg:<update_id>, Telegram gửi lại không ghi đôi).
+  // Tiền mặc định vào / ra quỹ chung; nói rõ người thì người đó. Trả / thu: khoản cũ nhất của đối tác, vượt dư → không ghi.
+  private async recordDebt(msg: IncomingMessage, intent: DebtIntent, member: ThanhVienRecord): Promise<RecordOutcome> {
+    const nowIso = this.now().toISOString();
+    const day = new Date(Date.parse(`${toVnDate(new Date(msg.receivedAt))}T00:00:00Z`) - intent.daysAgo * 86_400_000).toISOString().slice(0, 10);
+    const holder: MoneyHolderId = intent.holder ?? 'QUY_CHUNG';
+    const memberId = member.id as MemberId;
+    return withDuplicateFallback(this.db, msg.updateId, () =>
+      this.db.transaction(async (tx): Promise<RecordOutcome> => {
+        const messageId = await insertIncomingMessage(tx, msg, memberId, nowIso);
+        if (!messageId) {
+          return loadExistingOutcome(tx, msg.updateId);
+        }
+        const base = { idempotencyKey: telegramKey(msg.updateId), soTien: intent.amount, ngay: day, nguoiTaoId: memberId, nguoiGiuTienId: holder, sourceMessageId: messageId };
+        let written: { transaction: GiaoDichRecord; loan: KhoanNoRecord };
+        if (intent.kind === 'BORROW' || intent.kind === 'LEND') {
+          const chieuNo = intent.kind === 'BORROW' ? LOAN_DIRECTION.DI_VAY : LOAN_DIRECTION.CHO_VAY;
+          written = await this.debts.createLoan({ ...base, chieuNo, tenKhoanNo: `${intent.kind === 'BORROW' ? 'Vay' : 'Cho vay'} ${intent.partner}`, doiTac: intent.partner }, tx);
+        } else {
+          const lending = intent.kind === 'COLLECT' || intent.kind === 'INTEREST_COLLECT';
+          const loans = (await this.debts.listOpen(tx)).filter((l) => l.chieu_no === (lending ? LOAN_DIRECTION.CHO_VAY : LOAN_DIRECTION.DI_VAY) && partnerKeyOf(l.doi_tac) === intent.partnerKey);
+          const oldest = loans[0];
+          if (!oldest) {
+            return ignoreMessage(tx, messageId, lending ? 'NO_KHONG_CO_KHOAN_CHO_VAY' : 'NO_KHONG_CO_KHOAN_VAY', nowIso);
+          }
+          if (intent.kind === 'INTEREST_COLLECT') {
+            // Lãi cho vay thu về = khoản THU danh mục Lãi cho vay (không đổi dư nợ)
+            const v = await validateCompletedTransaction(tx, {
+              loai: TRANSACTION_TYPE.THU,
+              soTien: intent.amount,
+              maDanhMuc: CATEGORY_CODE.LAI_CHO_VAY,
+              nguoiThucHienId: memberId,
+              nguoiGiuTienId: holder,
+              doiTuongThuHuongId: null,
+              chieuDieuChinh: null,
+              moTa: `Lãi cho vay: ${intent.partner}`,
+              ngayGiaoDich: day,
+            });
+            const transaction = await insertCompleted(tx, v, memberId, messageId, telegramKey(msg.updateId), nowIso);
+            await updateMessageStatus(tx, messageId, MESSAGE_STATUS.DA_GHI, nowIso);
+            return { kind: 'RECORDED', duplicate: false, message: await requireMessage(tx, messageId), transaction, confirmations: [], chonDanhMuc: false, hu: null };
+          }
+          if (intent.kind === 'INTEREST_PAY') {
+            written = await this.debts.payInterest({ ...base, khoanNoId: oldest.id }, tx);
+          } else {
+            if (intent.amount > Number(oldest.du_no_hien_tai)) {
+              return ignoreMessage(tx, messageId, 'NO_TRA_VUOT', nowIso);
+            }
+            written = await this.debts.repayPrincipal({ ...base, khoanNoId: oldest.id }, tx);
+          }
+        }
+        await updateMessageStatus(tx, messageId, MESSAGE_STATUS.DA_GHI, nowIso);
+        return { kind: 'DEBT', duplicate: false, message: await requireMessage(tx, messageId), transaction: written.transaction, loan: written.loan };
+      }),
+    );
   }
 
   // Ghi kết quả parser. Thứ tự trong 1 transaction: tin_nhan_goc → giao_dich → yeu_cau → audit → trạng thái tin.

@@ -45,6 +45,13 @@ export function listLoans(db: DatabaseAdapter): Promise<KhoanNoRecord[]> {
   );
 }
 
+// Khoản đang nợ (chưa tất toán / huỷ), cũ trước — trả / thu nợ trừ khoản cũ nhất
+export function listOpenLoans(db: DatabaseAdapter): Promise<KhoanNoRecord[]> {
+  return db.query<KhoanNoRecord>(
+    "SELECT * FROM khoan_no WHERE trang_thai = 'DANG_NO' AND deleted_at IS NULL ORDER BY ngay_phat_sinh, created_at, id",
+  );
+}
+
 // Trừ dư nợ có điều kiện (khoá dòng trên Postgres, chặn trả vượt). Trả số dòng đổi.
 export async function decreaseLoanBalance(
   db: DatabaseAdapter,
@@ -155,4 +162,18 @@ export async function sumLoanLedger(db: DatabaseAdapter, loanId: string): Promis
     [loanId],
   );
   return { giaiNgan: toSafeNumber(row?.giai_ngan), goc: toSafeNumber(row?.goc) };
+}
+
+// Phase 8b: dư nợ 2 chiều đến ngày asOf, tính từ lich_su_no (giải ngân − trả / thu gốc) — báo cáo kỳ cũ không lẫn nợ sau đó
+export async function sumDebtAsOf(db: DatabaseAdapter, asOf: string): Promise<{ dangNo: number; choVay: number }> {
+  const rows = await db.query<{ chieu_no: string; du_no: unknown }>(
+    `SELECT k.chieu_no, COALESCE(SUM(CASE WHEN l.loai_bien_dong = 'GIAI_NGAN' THEN l.so_tien
+         WHEN l.loai_bien_dong IN ('TRA_GOC', 'THU_GOC') THEN -l.so_tien ELSE 0 END), 0) AS du_no
+     FROM lich_su_no l JOIN khoan_no k ON k.id = l.khoan_no_id
+     WHERE l.deleted_at IS NULL AND k.deleted_at IS NULL AND l.ngay_ghi_nhan <= $1
+     GROUP BY k.chieu_no`,
+    [asOf],
+  );
+  const of = (c: string) => toSafeNumber(rows.find((r) => r.chieu_no === c)?.du_no);
+  return { dangNo: of('DI_VAY'), choVay: of('CHO_VAY') };
 }

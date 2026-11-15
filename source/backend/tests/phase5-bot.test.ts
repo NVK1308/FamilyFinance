@@ -483,7 +483,8 @@ for (const backend of BACKENDS) {
       const before = await env.bal.getHolderBalances('2026-11-05');
       const texts = [
         'thu hồi nợ 2tr', 'đòi nợ 2tr', 'thu nợ 2tr', 'chi nợ 2tr', 'nợ 2tr', 'trả nợ 2tr',
-        'cho vay anh Nam 5tr', 'vay ngân hàng 10tr', 'thu: thu hồi nợ 2tr', 'Nợ chị Lan 1tr',
+        // Phase 8b: "cho vay anh Nam 5tr", "vay ngân hàng 10tr" ghi nợ thật (phase8b-debt) — ở đây chỉ câu không rõ chiều / đối tác
+        'nợ anh Nam 5tr', 'vay 10tr', 'thu: thu hồi nợ 2tr', 'Nợ chị Lan 1tr',
       ];
       for (const t of texts) {
         await h.text(VO, t);

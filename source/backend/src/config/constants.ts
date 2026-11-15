@@ -202,6 +202,7 @@ export const TABLE_NAME = {
   CAU_HINH: 'cau_hinh',
   KHOAN_DINH_KY: 'khoan_dinh_ky',
   KHOAN_DINH_KY_LAN: 'khoan_dinh_ky_lan',
+  NGAN_SACH: 'ngan_sach',
   LICH_SU_NO: 'lich_su_no',
   YEU_CAU_XAC_NHAN: 'yeu_cau_xac_nhan',
   LICH_SU_CHINH_SUA: 'lich_su_chinh_sua',

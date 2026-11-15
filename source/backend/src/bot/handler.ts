@@ -21,6 +21,7 @@ import { KEYBOARD_EXCLUDED_CATEGORIES, TransactionService } from '../services/tr
 import { TransferService } from '../services/transfer-service.ts';
 import { EditService, amountOnly, canEditAmount, type EditResult } from '../services/edit-service.ts';
 import { RecurringService, type PayResult } from '../services/recurring-service.ts';
+import { BudgetService } from '../services/budget-service.ts';
 import type { DueRow } from '../db/repositories/recurring-repository.ts';
 import { RECURRING_CODE, RECURRING_PROMPT, dueButtonRow, dueDoneText, recurringPromptText, reminderView } from './recurring-replies.ts';
 import { loadSettings } from '../services/settings-service.ts';
@@ -44,6 +45,10 @@ import {
   SHORT_HELP,
   cancelButton,
   categoryKeyboard,
+  budgetWarningText,
+  debtResultText,
+  debtSummaryText,
+  deletedJarText,
   formatDay,
   formatMoney,
   fundCancelNoticeText,
@@ -73,6 +78,7 @@ export interface BotContext {
   savings: SavingsService;
   edits: EditService;
   recurring: RecurringService;
+  budgets: BudgetService;
   // id bot (phần trước ':' của token) — kiểm tin nhắc sửa đúng do bot này gửi; null = không biết (test)
   botId: number | null;
 }
@@ -92,6 +98,7 @@ export function createBotContext(db: DatabaseAdapter, now: () => Date = () => ne
     savings: txs.savingsService,
     edits: new EditService(db, txs.savingsService, balances, options),
     recurring: new RecurringService(db, options),
+    budgets: new BudgetService(db, options),
   };
 }
 
@@ -250,6 +257,7 @@ async function editActions(ctx: BotContext, member: ThanhVienRecord, chatId: num
       if (other !== null) {
         actions.push({ type: 'send', chatId: other, text: editNoticeText(res.before, res.after, name, member.id, toVnDate(ctx.now())) });
       }
+      actions.push(...(await budgetActions(ctx, res.after)));
       return actions;
     }
     case 'REPLAY': {
@@ -316,10 +324,22 @@ async function outcomeActions(
       const view = await transactionView(ctx, outcome.transaction, outcome.chonDanhMuc, outcome.hu);
       const warn = outcome.canhBaoHuAm ? `\n⚠️ Hũ ${outcome.hu?.ten} bị âm — kiểm tra lại.` : '';
       const actions: BotAction[] = [send(`${view.text}${warn}`, view.keyboard)];
+      if (!outcome.duplicate) {
+        actions.push(...(await budgetActions(ctx, outcome.transaction)));
+      }
       // Chi từ hũ chung → báo người kia (như bỏ / lấy hũ)
       const other = outcome.hu && !outcome.duplicate ? await memberChatId(ctx.db, otherMember(member.id)) : null;
       if (other !== null && outcome.hu) {
         actions.push({ type: 'send', chatId: other, text: jarExpenseNoticeText(outcome.transaction, outcome.hu, member.id) });
+      }
+      return actions;
+    }
+    case 'DEBT': {
+      const view = await transactionView(ctx, outcome.transaction, false);
+      const actions: BotAction[] = [send(debtResultText(outcome.transaction, outcome.loan), view.keyboard)];
+      const other = outcome.duplicate ? null : await memberChatId(ctx.db, otherMember(member.id));
+      if (other !== null) {
+        actions.push({ type: 'send', chatId: other, text: debtResultText(outcome.transaction, outcome.loan, member.id) });
       }
       return actions;
     }
@@ -385,6 +405,10 @@ async function answerQuestion(
   parsed: ParsedQueryOrOtherResult,
 ): Promise<string> {
   const spec = parseQuery(incoming.text, parsed.ngay_tham_chieu, await ctx.savings.jarNames());
+  // Phase 8b: hỏi nợ → khoản nợ đang mở
+  if (spec?.kind === 'NO') {
+    return debtSummaryText(await ctx.txs.debtService.listOpen());
+  }
   if (!spec) {
     const nowIso = ctx.now().toISOString();
     await ctx.db.transaction(async (tx) => {
@@ -479,6 +503,26 @@ async function runCallback(
   switch (data.kind) {
     case 'dk':
       return dueCallback(ctx, member, data.id, data.action, answer, source);
+    case 'xh': {
+      if (!isSpouse(member)) {
+        return [answer(DENIED.WRONG_CONFIRMER)];
+      }
+      if (data.mode === 'X') {
+        return [answer('Đã thôi'), ...edit('Đã thôi — không xoá hũ.')];
+      }
+      const dest = data.dest === 'V' ? 'VO' : data.dest === 'C' ? 'CHONG' : 'QUY_CHUNG';
+      const gold = data.mode === 'B' ? { kind: 'SELL' as const } : data.mode === 'J' && data.toJarId ? { kind: 'MOVE' as const, toJarId: data.toJarId } : { kind: 'NONE' as const };
+      const res = await ctx.savings.deleteJar(data.jarId, me, dest, gold);
+      if (res.kind === 'DONE') {
+        return [answer('Hũ này đã xoá trước đó.'), ...edit(`🗑 Hũ ${res.jar.ten} đã xoá.`)];
+      }
+      const actions: BotAction[] = [answer('Đã xoá hũ'), ...edit(deletedJarText(res))];
+      const other = await memberChatId(ctx.db, otherMember(me));
+      if (other !== null) {
+        actions.push({ type: 'send', chatId: other, text: deletedJarText(res, me) });
+      }
+      return actions;
+    }
     case 'dx': {
       if (!isSpouse(member)) {
         return [answer(DENIED.WRONG_CONFIRMER)];
@@ -504,7 +548,7 @@ async function runCallback(
       // Đổi Thu↔Chi → hiện bàn phím loại mới; chọn danh mục xong → chỉ còn Huỷ
       const view = await transactionView(ctx, res.transaction, data.kind === 'lt');
       const note = res.transaction.trang_thai === 'DA_HUY' ? 'Khoản này đã huỷ.' : res.changed ? 'Đã đổi' : undefined;
-      return [answer(note), ...edit(view.text, view.keyboard)];
+      return [answer(note), ...edit(view.text, view.keyboard), ...(res.changed ? await budgetActions(ctx, res.transaction) : [])];
     }
     case 'sd': {
       // Nút "✏️ Sửa số tiền" → gửi tin nhắc, người dùng trả lời bằng số tiền mới
@@ -699,7 +743,7 @@ async function dueCallback(
   if (res.kind !== 'PAID') {
     return [answer(dueDoneText(res.due)), ...(await dueResultActions(ctx, chatId, res.due, null, clicked))];
   }
-  return [answer('Đã ghi'), ...(await dueResultActions(ctx, chatId, res.due, await payResult(ctx, res), clicked))];
+  return [answer('Đã ghi'), ...(await dueResultActions(ctx, chatId, res.due, await payResult(ctx, res), clicked)), ...(await budgetActions(ctx, res.transaction))];
 }
 
 // Trả lời tin nhắc "Số khác" bằng số tiền. Sửa lại câu trả lời sau khi đã ghi → sửa số tiền khoản đó (như nút ✏️ Sửa).
@@ -733,5 +777,25 @@ async function recurringReplyActions(
   if (res.kind !== 'PAID') {
     return [...send(dueDoneText(res.due)), ...(await redrawReminders(ctx, [res.due.ky], RecurringService.holdersOf(res.due)))];
   }
-  return dueResultActions(ctx, chatId, res.due, await payResult(ctx, res));
+  return [...(await dueResultActions(ctx, chatId, res.due, await payResult(ctx, res))), ...(await budgetActions(ctx, res.transaction))];
+}
+
+// ---------- Phase 8c: cảnh báo ngân sách (sau commit, báo cả 2 người) ----------
+
+async function budgetActions(ctx: BotContext, tx: GiaoDichRecord): Promise<BotAction[]> {
+  if (tx.loai_giao_dich !== 'CHI') {
+    return [];
+  }
+  const warning = await ctx.budgets.checkAfterSpend(tx, () => loadSettings(ctx.db));
+  if (!warning) {
+    return [];
+  }
+  const actions: BotAction[] = [];
+  for (const id of ['VO', 'CHONG'] as const) {
+    const chatId = await memberChatId(ctx.db, id);
+    if (chatId !== null) {
+      actions.push({ type: 'send', chatId, text: budgetWarningText(warning) });
+    }
+  }
+  return actions;
 }

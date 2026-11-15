@@ -253,9 +253,26 @@ export async function getJarById(db: DatabaseAdapter, id: string): Promise<HuRec
   return row ? normalizeJar(row) : null;
 }
 
+// Hũ đang dùng theo tên (hũ đã xoá không khớp → tạo lại cùng tên được)
 export async function getJarByNormalizedName(db: DatabaseAdapter, tenKhongDau: string): Promise<HuRecord | null> {
-  const row = await db.queryOne<HuRecord>('SELECT * FROM hu WHERE ten_khong_dau = $1 AND deleted_at IS NULL', [tenKhongDau]);
+  const row = await db.queryOne<HuRecord>('SELECT * FROM hu WHERE ten_khong_dau = $1 AND deleted_at IS NULL AND is_active = TRUE', [tenKhongDau]);
   return row ? normalizeJar(row) : null;
+}
+
+// Mọi hũ kể cả đã xoá (tên hiện trong lịch sử)
+export async function listAllJars(db: DatabaseAdapter): Promise<HuRecord[]> {
+  const rows = await db.query<HuRecord>('SELECT * FROM hu WHERE deleted_at IS NULL ORDER BY version, id');
+  return rows.map(normalizeJar);
+}
+
+// Xoá hũ = ẩn (is_active FALSE). 0 = đã xoá trước đó (2 người bấm → 1 lần)
+export async function deactivateJar(db: DatabaseAdapter, id: string, nowIso: string): Promise<number> {
+  const version = await db.nextVersion();
+  const res = await db.execute(
+    'UPDATE hu SET is_active = FALSE, updated_at = $2, version = $3 WHERE id = $1 AND is_active = TRUE AND deleted_at IS NULL',
+    [id, nowIso, version],
+  );
+  return res.changes;
 }
 
 export interface NewJarInput {

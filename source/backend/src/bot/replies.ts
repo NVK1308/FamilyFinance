@@ -1,5 +1,5 @@
 import type { MemberId, MoneyHolderId, TransactionType } from '../config/constants.ts';
-import type { ChuyenQuyChungRecord, ChuyenTienNoiBoRecord, DanhMucRecord, GiaoDichRecord, HuRecord, HuTietKiemRecord } from '../db/types.ts';
+import type { ChuyenQuyChungRecord, ChuyenTienNoiBoRecord, DanhMucRecord, GiaoDichRecord, HuRecord, HuTietKiemRecord, KhoanNoRecord } from '../db/types.ts';
 import { goldPricePerChi, goldValue, pricePerChi, type GoldPrice, type SavingsSummary } from '../services/savings-service.ts';
 import type { InlineKeyboard } from '../telegram/types.ts';
 import { categoryCodeFits, encodeCallback } from './callback-data.ts';
@@ -214,6 +214,7 @@ export function balanceSummaryLines(
   tong: number,
   asOf: string,
   hu: Pick<SavingsSummary, 'tien' | 'vangPhan' | 'vangGiaTri'>,
+  no: { dangNo: number; choVay: number } = { dangNo: 0, choVay: 0 },
 ): string[] {
   const holders: MoneyHolderId[] = ['VO', 'CHONG', 'QUY_CHUNG', 'CHUA_XAC_DINH'];
   const lines = [
@@ -221,14 +222,16 @@ export function balanceSummaryLines(
     ...holders.filter((h) => h !== 'CHUA_XAC_DINH' || nhom[h] !== 0).map((h) => `• ${HOLDER_NAME[h]}: ${formatMoney(nhom[h])}`),
   ];
   if (hu.tien === 0 && hu.vangPhan === 0) {
-    return [...lines, `Tổng: ${formatMoney(tong)}`];
+    return [...lines, `Tổng: ${formatMoney(tong)}`, ...debtBalanceLines(tong, no)];
   }
   const unpriced = hu.vangPhan !== 0 && hu.vangGiaTri === null ? ' (chưa tính vàng chưa định giá)' : '';
+  const assets = tong + hu.tien + (hu.vangGiaTri ?? 0);
   return [
     ...lines,
     `Tiền mặt: ${formatMoney(tong)}`,
     `🏺 Hũ tiết kiệm: ${assetText(hu.tien, hu.vangPhan, hu.vangGiaTri)}`,
-    `Tổng tài sản (ước tính): ${formatMoney(tong + hu.tien + (hu.vangGiaTri ?? 0))}${unpriced}`,
+    `Tổng tài sản (ước tính): ${formatMoney(assets)}${unpriced}`,
+    ...debtBalanceLines(assets, no),
   ];
 }
 
@@ -328,7 +331,7 @@ export function jarListLines(s: SavingsSummary, asOf: string): string[] {
 // ---------- Bỏ qua / hướng dẫn ----------
 
 const IGNORED_TEXT: Record<string, string> = {
-  GHI_CHU_NO: '📝 Đã lưu ghi chú nợ (không tính vào số dư). Xem: /ghichu',
+  GHI_CHU_NO: '📝 Đã lưu ghi chú nợ (không tính vào số dư). Xem: /ghichu\nMuốn theo dõi nợ thật: "vay anh Nam 5tr", "cho chị Lan vay 3tr"; nợ có từ trước: /nodau vay anh Nam 5tr',
   THIEU_SO_TIEN: "Chưa rõ số tiền — nhắn lại đầy đủ, vd 'tiền ăn 50k'.",
   SO_TIEN_MO_HO: "Số tiền chưa rõ (có 2 số) — nhắn lại 1 số, vd 'tiền ăn 50k'.",
   THIEU_HOAC_MO_HO_SO_TIEN: "Chưa rõ số tiền chuyển — nhắn lại, vd 'chuyển vợ 3tr'.",
@@ -362,6 +365,11 @@ const IGNORED_TEXT: Record<string, string> = {
   SUA_DA_HUY: 'Khoản này đã huỷ — không sửa được.',
   SUA_DANG_CHO: 'Khoản này đang chờ chọn — chọn bằng nút trước.',
   SUA_KHONG_TIM_THAY: 'Không tìm thấy khoản cần sửa.',
+  SUA_HU_DA_XOA: 'Khoản này chi từ hũ đã xoá — không sửa được.',
+  SUA_KHOAN_NO: 'Khoản nợ / lãi vay không sửa số tiền được — bấm Huỷ rồi nhắn lại.',
+  NO_KHONG_CO_KHOAN_VAY: 'Chưa có khoản vay đang mở với người này (xem /no). Nợ có từ trước: /nodau vay <người> <số còn nợ> rồi nhắn lại.',
+  NO_KHONG_CO_KHOAN_CHO_VAY: 'Chưa có khoản cho vay đang mở với người này (xem /no). Cho vay từ trước: /nodau cho <người> vay <số còn nợ> rồi nhắn lại.',
+  NO_TRA_VUOT: 'Số trả lớn hơn số còn nợ của khoản cũ nhất với người này — xem /no rồi nhắn từng khoản.',
   HET_HAN: 'Khoản này đã hết hạn.',
   TU_CHOI: 'Khoản này đã bị từ chối.',
   LOI: 'Tin này bị lỗi lúc xử lý — nhắn lại sau.',
@@ -390,11 +398,91 @@ export const HELP_TEXT = [
   '/tuan, /thang — tổng hợp tuần / tháng này (thêm "trước", "vợ", "chồng": /tuan trước vợ)',
   'Xem từng khoản: "liệt kê chi tiết vợ chi tuần trước" (tối đa 31 ngày cuối kỳ)',
   '/cho — khoản chuyển đang chờ',
-  '/ghichu — ghi chú nợ',
+  '/no — nợ đang mở (vay anh Nam 5tr · trả anh Nam 2tr · cho chị Lan vay 3tr · chị Lan trả 1tr) · /nodau — khai nợ có từ trước',
+  '/ghichu — ghi chú nợ cũ',
   '/sodudau <vợ> <chồng> <quỹ> — nhập số dư ban đầu (1 lần)',
   '/dieuchinh vợ +2tr · /dieuchinh vợ = 3tr — chỉnh số dư cho khớp tiền thật (không tính thu/chi)',
   '/tietkiem — các hũ · /taohu <tên> [mục tiêu] — tạo hũ · /tietkiemdau <tiền | N chỉ vàng> [hũ] — khai báo tiền / vàng đang để dành',
+  '/ngansach — ngân sách tháng theo danh mục: /ngansach thức ăn 5tr; chi vượt mốc thì bot báo cả 2 người',
+  '/xoahu <tên hũ> [vợ|chồng|quỹ] — xoá hũ, tiền còn lại về quỹ chung (hoặc người đã nói); vàng chuyển sang hũ khác hoặc bán',
 ].join('\n');
+
+// ---------- Ngân sách (Phase 8c) ----------
+
+export const BUDGET_SYNTAX = 'Đặt ngân sách tháng: /ngansach <danh mục> <số tiền>, vd /ngansach thức ăn 5tr · gõ lại = sửa · /ngansach thức ăn 0 = bỏ';
+
+function pctText(spent: number, limit: number): string {
+  return `${Math.round((spent * 100) / limit)}%`;
+}
+
+export function budgetWarningText(w: { ten: string; ky: string; spent: number; limit: number; muc: number }): string {
+  const month = `tháng ${Number(w.ky.slice(5))}`;
+  const amounts = `${formatMoney(w.spent).replace(/đ$/, '')} / ${formatMoney(w.limit)} (${pctText(w.spent, w.limit)})`;
+  return w.muc >= 100 ? `🚨 Vượt ngân sách ${w.ten} ${month}: đã chi ${amounts}` : `⚠️ Ngân sách ${w.ten} ${month}: đã chi ${amounts}`;
+}
+
+// Thanh tiến độ bằng chữ (10 ô)
+function progressBar(spent: number, limit: number): string {
+  const filled = Math.min(10, Math.round((spent * 10) / limit));
+  return '▰'.repeat(filled) + '▱'.repeat(10 - filled);
+}
+
+export function budgetOverviewText(lines: ReadonlyArray<{ budget: { ten_danh_muc: string; so_tien_thang: number }; spent: number }>, ky: string): string {
+  if (lines.length === 0) {
+    return `Chưa đặt ngân sách nào.\n${BUDGET_SYNTAX}`;
+  }
+  const rows = lines.map(({ budget, spent }) => {
+    const left = budget.so_tien_thang - spent;
+    const tail = left >= 0 ? `còn ${formatMoney(left)}` : `vượt ${formatMoney(-left)}`;
+    return `• ${budget.ten_danh_muc}: ${formatMoney(spent)} / ${formatMoney(budget.so_tien_thang)} · ${tail}\n  ${progressBar(spent, budget.so_tien_thang)} ${pctText(spent, budget.so_tien_thang)}${spent > budget.so_tien_thang ? ' 🚨' : ''}`;
+  });
+  return [`💰 Ngân sách tháng ${Number(ky.slice(5))}/${ky.slice(0, 4)}`, ...rows, '', BUDGET_SYNTAX].join('\n');
+}
+
+// ---------- Xoá hũ (Phase 8a) ----------
+
+const MAX_GOLD_JAR_BUTTONS = 8;
+const DEST_CODE: Record<'VO' | 'CHONG' | 'QUY_CHUNG', 'V' | 'C' | 'Q'> = { VO: 'V', CHONG: 'C', QUY_CHUNG: 'Q' };
+
+// Tin hỏi lại trước khi xoá: tiền về đâu, vàng chuyển / bán; hũ âm → chỉ báo, không có nút
+export function deleteJarConfirm(
+  jar: HuRecord,
+  c: { tien: number; vangPhan: number; gia: GoldPrice | null; otherJars: HuRecord[] },
+  dest: 'VO' | 'CHONG' | 'QUY_CHUNG',
+): { text: string; keyboard?: InlineKeyboard } {
+  const where = holderName(dest).toLowerCase();
+  if (c.tien < 0 || c.vangPhan < 0) {
+    return { text: `Hũ ${jar.ten} đang âm (${formatMoney(c.tien)}${c.vangPhan ? ` · ${formatGold(c.vangPhan)} vàng` : ''}) — kiểm tra / huỷ khoản nhập sai trước khi xoá.` };
+  }
+  const cb = (mode: 'N' | 'B' | 'X' | 'J', toJarId?: string) =>
+    encodeCallback({ kind: 'xh', jarId: jar.id, dest: DEST_CODE[dest], mode, ...(toJarId ? { toJarId } : {}) });
+  const lines = [`🗑 Xoá hũ ${jar.ten}?`, c.tien > 0 ? `• Tiền còn ${formatMoney(c.tien)} → ${where}` : '• Hũ không còn tiền'];
+  const keyboard: InlineKeyboard = [];
+  if (c.vangPhan > 0) {
+    const sell = c.gia ? Math.round((c.vangPhan * goldPricePerChi(c.gia)) / 10) : null;
+    lines.push(`• Vàng ${formatGold(c.vangPhan)}: chuyển sang hũ khác hoặc bán${sell !== null ? ` (≈ ${formatMoney(sell)} → ${where})` : ' (chưa có giá — /giavang trước để bán)'}`);
+    for (const other of c.otherJars.slice(0, MAX_GOLD_JAR_BUTTONS)) {
+      keyboard.push([{ text: `🔁 Vàng → hũ ${other.ten}`, callback_data: cb('J', other.id) }]);
+    }
+    if (sell !== null) {
+      keyboard.push([{ text: `💰 Bán vàng ≈ ${formatMoney(sell)}`, callback_data: cb('B') }]);
+    }
+  } else {
+    keyboard.push([{ text: '🗑 Xoá hũ', callback_data: cb('N') }]);
+  }
+  keyboard.push([{ text: 'Thôi', callback_data: cb('X') }]);
+  lines.push('Lịch sử bỏ / lấy của hũ vẫn giữ; khoản cũ của hũ không huỷ / sửa được sau khi xoá.');
+  return { text: lines.join('\n'), keyboard };
+}
+
+export function deletedJarText(r: { jar: HuRecord; tien: number; vangPhan: number; goldTo: HuRecord | null; goldSold: number | null; dest: string }, by?: string): string {
+  const where = holderName(r.dest as MoneyHolderId).toLowerCase();
+  const lines = [by ? `ℹ️ ${memberName(by)} đã xoá hũ ${r.jar.ten}.` : `🗑 Đã xoá hũ ${r.jar.ten}.`];
+  if (r.tien > 0) lines.push(`• Tiền ${formatMoney(r.tien)} → ${where}`);
+  if (r.vangPhan > 0 && r.goldTo) lines.push(`• Vàng ${formatGold(r.vangPhan)} → hũ ${r.goldTo.ten}`);
+  if (r.vangPhan > 0 && r.goldSold !== null) lines.push(`• Bán vàng ${formatGold(r.vangPhan)} được ${formatMoney(r.goldSold)} → ${where}`);
+  return lines.join('\n');
+}
 
 export const SHORT_HELP = "Chưa hiểu tin này. Nhắn kiểu 'tiền ăn 50k', hoặc /help.";
 // Xuất báo cáo HTML chưa có (Phase 6)
@@ -427,4 +515,76 @@ export const DONE_BUT_ERROR_TEXT = '⚠️ Tin đã được ghi nhưng lỗi kh
 
 export function holderName(id: MoneyHolderId): string {
   return HOLDER_NAME[id];
+}
+
+// ---------- Nợ (Phase 8b) ----------
+
+export const DEBT_SYNTAX = [
+  'Ghi nợ (tiền mặc định vào / ra quỹ chung; nói rõ "vợ vay…", "…vào vợ", "tôi vay…" thì vào người đó):',
+  '• vay anh Nam 5tr · trả anh Nam 2tr · trả lãi anh Nam 200k',
+  '• cho chị Lan vay 3tr · chị Lan trả 1tr · chị Lan trả lãi 200k',
+  'Nợ có từ trước khi dùng bot (không đổi số dư): /nodau vay anh Nam 50tr · /nodau cho chị Lan vay 3tr',
+].join('\n');
+
+function capFirst(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+// Kết quả ghi nợ (by: báo người kia)
+export function debtResultText(tx: GiaoDichRecord, loan: KhoanNoRecord, by?: string): string {
+  const lending = loan.chieu_no === 'CHO_VAY';
+  const where = holderName((tx.nguoi_giu_tien_id ?? 'QUY_CHUNG') as MoneyHolderId).toLowerCase();
+  const amount = formatMoney(Number(tx.so_tien));
+  const partner = loan.doi_tac;
+  const action =
+    tx.loai_giao_dich === 'VAY'
+      ? lending
+        ? `Cho ${partner} vay ${amount} · từ ${where}`
+        : `Vay ${partner} ${amount} · vào ${where}`
+      : tx.loai_giao_dich === 'TRA_NO'
+        ? lending
+          ? `${capFirst(partner)} trả ${amount} · vào ${where}`
+          : `Trả ${partner} ${amount} · từ ${where}`
+        : `Trả lãi ${partner} ${amount} (tính vào chi) · từ ${where}`;
+  const du = Number(loan.du_no_hien_tai);
+  const state =
+    tx.trang_thai === 'DA_HUY'
+      ? 'Đã huỷ.'
+      : lending
+        ? du > 0
+          ? `${capFirst(partner)} còn nợ: ${formatMoney(du)}`
+          : `${capFirst(partner)} đã trả hết.`
+        : du > 0
+          ? `Còn nợ ${partner}: ${formatMoney(du)}`
+          : `Đã trả hết nợ ${partner}.`;
+  return `${by ? `ℹ️ ${memberName(by)} ghi: ` : '✅ '}${action} · ${formatDay(tx.ngay_giao_dich)}\n${state}`;
+}
+
+// /no, câu hỏi nợ: khoản đang mở 2 chiều
+export function debtSummaryText(open: readonly KhoanNoRecord[]): string {
+  if (open.length === 0) {
+    return `Không có khoản nợ nào đang mở.\n${DEBT_SYNTAX}`;
+  }
+  const block = (title: string, loans: readonly KhoanNoRecord[], verb: string): string[] => {
+    if (loans.length === 0) return [];
+    const total = loans.reduce((s, l) => s + Number(l.du_no_hien_tai), 0);
+    const rows = loans.map((l) => {
+      const since = l.ghi_chu === 'NO_DAU' ? 'nợ cũ' : formatDay(String(l.ngay_phat_sinh).slice(0, 10));
+      return `• ${l.doi_tac}: ${formatMoney(Number(l.du_no_hien_tai))} (${verb} ${formatMoney(Number(l.so_tien_goc))}, ${since})`;
+    });
+    return [title, ...rows, `Tổng: ${formatMoney(total)}`];
+  };
+  return [
+    '📒 Nợ đang mở',
+    ...block('Mình đang nợ:', open.filter((l) => l.chieu_no === 'DI_VAY'), 'vay'),
+    ...block('Đang cho vay:', open.filter((l) => l.chieu_no === 'CHO_VAY'), 'cho vay'),
+    '',
+    'Ghi chú nợ cũ (trước khi theo dõi nợ): /ghichu',
+  ].join('\n');
+}
+
+// Dòng nợ + tài sản ròng thêm vào /sodu (không có nợ → không thêm)
+export function debtBalanceLines(assets: number, no: { dangNo: number; choVay: number }): string[] {
+  if (no.dangNo === 0 && no.choVay === 0) return [];
+  return [`📕 Đang nợ: ${formatMoney(no.dangNo)} · 📗 Cho vay: ${formatMoney(no.choVay)}`, `Tài sản ròng (trừ nợ, cộng cho vay): ${formatMoney(assets - no.dangNo + no.choVay)}`];
 }

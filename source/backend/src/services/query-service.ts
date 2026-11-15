@@ -17,6 +17,7 @@ import {
   type TxRow,
   type TxQueryFilter,
 } from '../db/repositories/index.ts';
+import { sumDebtAsOf } from '../db/repositories/debt-repository.ts';
 import type { DatabaseAdapter, HuRecord } from '../db/types.ts';
 import { addDaysToIsoDate } from '../parser/date-parser.ts';
 import type { Period } from '../query/period-parser.ts';
@@ -69,7 +70,16 @@ export type QueryAnswer =
       topDanhMuc: GroupTotal[];
     }
   // hu: mọi hũ (tiền + vàng) khi hỏi số dư chung; null khi hỏi 1 người giữ
-  | { kind: 'SO_DU'; spec: QuerySpec; asOf: string; balances: HolderBalancesResult; dangChoChuyen: Sum | null; hu: SavingsSummary | null }
+  | {
+      kind: 'SO_DU';
+      spec: QuerySpec;
+      asOf: string;
+      balances: HolderBalancesResult;
+      dangChoChuyen: Sum | null;
+      hu: SavingsSummary | null;
+      // Phase 8b: dư nợ đến ngày hỏi (chỉ khi hỏi số dư chung)
+      no?: { dangNo: number; choVay: number };
+    }
   | {
       kind: 'HU_TIET_KIEM';
       spec: QuerySpec;
@@ -132,7 +142,8 @@ export class QueryService {
           asOf === today && (holder === null || member !== null) ? await sumPendingTransfers(this.db, member) : null;
         // Hỏi số dư chung → kèm hũ tiết kiệm (tài sản chung)
         const hu = holder === null ? await this.savings.summary(asOf) : null;
-        return { kind: 'SO_DU', spec, asOf, balances, dangChoChuyen, hu };
+        const no = holder === null ? await sumDebtAsOf(this.db, asOf) : undefined;
+        return { kind: 'SO_DU', spec, asOf, balances, dangChoChuyen, hu, ...(no ? { no } : {}) };
       }
       case 'HU_TIET_KIEM': {
         const asOf = spec.period.to < today ? spec.period.to : today;

@@ -21,6 +21,7 @@ import {
   insertLoan,
   insertTransaction,
   listLoans,
+  listOpenLoans,
   sumLoanLedger,
   updateLoanState,
 } from '../db/repositories/index.ts';
@@ -75,6 +76,8 @@ interface DebtTxBase {
   nguoiThucHienId?: MemberId;
   nguoiGiuTienId: MoneyHolderId;
   moTa?: string;
+  // Ghi từ tin nhắn Telegram (Phase 8b): tin gốc, key tg:<update_id>
+  sourceMessageId?: string | null;
 }
 
 export interface CreateLoanInput extends DebtTxBase {
@@ -100,8 +103,11 @@ export interface OutstandingLoan {
   duNoTheoLichSu: number;
 }
 
-function validateBase(input: DebtTxBase): void {
-  assertApiKey(input.idempotencyKey);
+// requireApiKey: hàm gọi tường minh bắt key api:<hex>; ghi từ tin nhắn (trong transaction của tin) dùng tg:<update_id>
+function validateBase(input: DebtTxBase, requireApiKey = true): void {
+  if (requireApiKey) {
+    assertApiKey(input.idempotencyKey);
+  }
   assertPositiveAmount(input.soTien);
   assertDate(input.ngay, 'ngay');
   assertMoneyHolder(input.nguoiGiuTienId);
@@ -117,8 +123,8 @@ export class DebtService {
   }
 
   // Tạo khoản nợ + giao dịch VAY + lich_su_no GIAI_NGAN trong 1 transaction
-  async createLoan(input: CreateLoanInput): Promise<DebtWriteResult> {
-    validateBase(input);
+  async createLoan(input: CreateLoanInput, outerTx?: DatabaseAdapter): Promise<DebtWriteResult> {
+    validateBase(input, !outerTx);
     if (!input.tenKhoanNo.trim() || !input.doiTac.trim()) {
       throw new DomainError('INVALID_INPUT', 'Thiếu tên khoản nợ hoặc đối tác');
     }
@@ -126,7 +132,7 @@ export class DebtService {
       assertDate(input.ngayDaoHan, 'ngayDaoHan');
     }
     const nowIso = this.now().toISOString();
-    return this.idempotent(input.idempotencyKey, () => this.db.transaction(async (tx) => {
+    const run = async (tx: DatabaseAdapter): Promise<DebtWriteResult> => {
       const existing = await this.findDuplicate(tx, input.idempotencyKey);
       if (existing) {
         return existing;
@@ -158,7 +164,7 @@ export class DebtService {
         mo_ta: input.moTa ?? `${label}: ${input.tenKhoanNo.trim()} (${input.doiTac.trim()})`,
         ngay_giao_dich: input.ngay,
         trang_thai: TRANSACTION_STATUS.HOAN_TAT,
-        source_message_id: null,
+        source_message_id: input.sourceMessageId ?? null,
         idempotency_key: input.idempotencyKey,
         nowIso,
       });
@@ -175,14 +181,15 @@ export class DebtService {
       const loan = await recomputeLoan(tx, loanId, nowIso);
       await this.audit(tx, loan, transaction, input.nguoiTaoId, nowIso);
       return { duplicate: false, loan, transaction };
-    }));
+    };
+    return outerTx ? run(outerTx) : this.idempotent(input.idempotencyKey, () => this.db.transaction(run));
   }
 
   // DI_VAY: trả gốc; CHO_VAY: thu gốc về. Trả vượt dư nợ → lỗi, rollback.
-  async repayPrincipal(input: LoanPaymentInput): Promise<DebtWriteResult> {
-    validateBase(input);
+  async repayPrincipal(input: LoanPaymentInput, outerTx?: DatabaseAdapter): Promise<DebtWriteResult> {
+    validateBase(input, !outerTx);
     const nowIso = this.now().toISOString();
-    return this.idempotent(input.idempotencyKey, () => this.db.transaction(async (tx) => {
+    const run = async (tx: DatabaseAdapter): Promise<DebtWriteResult> => {
       const existing = await this.findDuplicate(tx, input.idempotencyKey);
       if (existing) {
         return existing;
@@ -210,7 +217,7 @@ export class DebtService {
         mo_ta: input.moTa ?? `${isLending ? 'Thu gốc' : 'Trả gốc'}: ${before.ten_khoan_no}`,
         ngay_giao_dich: input.ngay,
         trang_thai: TRANSACTION_STATUS.HOAN_TAT,
-        source_message_id: null,
+        source_message_id: input.sourceMessageId ?? null,
         idempotency_key: input.idempotencyKey,
         nowIso,
       });
@@ -227,14 +234,15 @@ export class DebtService {
       const loan = await recomputeLoan(tx, before.id, nowIso);
       await this.audit(tx, loan, transaction, input.nguoiTaoId, nowIso);
       return { duplicate: false, loan, transaction };
-    }));
+    };
+    return outerTx ? run(outerTx) : this.idempotent(input.idempotencyKey, () => this.db.transaction(run));
   }
 
   // Trả lãi khoản đi vay: chi phí LAI_VAY, không giảm dư nợ. Lãi cho vay thu về ghi THU LAI_CHO_VAY.
-  async payInterest(input: LoanPaymentInput): Promise<DebtWriteResult> {
-    validateBase(input);
+  async payInterest(input: LoanPaymentInput, outerTx?: DatabaseAdapter): Promise<DebtWriteResult> {
+    validateBase(input, !outerTx);
     const nowIso = this.now().toISOString();
-    return this.idempotent(input.idempotencyKey, () => this.db.transaction(async (tx) => {
+    const run = async (tx: DatabaseAdapter): Promise<DebtWriteResult> => {
       const existing = await this.findDuplicate(tx, input.idempotencyKey);
       if (existing) {
         return existing;
@@ -263,7 +271,7 @@ export class DebtService {
         mo_ta: input.moTa ?? `Trả lãi: ${loan.ten_khoan_no}`,
         ngay_giao_dich: input.ngay,
         trang_thai: TRANSACTION_STATUS.HOAN_TAT,
-        source_message_id: null,
+        source_message_id: input.sourceMessageId ?? null,
         idempotency_key: input.idempotencyKey,
         nowIso,
       });
@@ -279,7 +287,13 @@ export class DebtService {
       });
       await this.audit(tx, loan, transaction, input.nguoiTaoId, nowIso);
       return { duplicate: false, loan, transaction };
-    }));
+    };
+    return outerTx ? run(outerTx) : this.idempotent(input.idempotencyKey, () => this.db.transaction(run));
+  }
+
+  // Khoản đang nợ (chưa tất toán / huỷ), cũ trước
+  listOpen(db: DatabaseAdapter = this.db): Promise<KhoanNoRecord[]> {
+    return listOpenLoans(db);
   }
 
   // Danh sách khoản nợ kèm dư nợ tính lại từ lich_su_no để đối chiếu

@@ -41,6 +41,12 @@ Mỗi khoản ghi xong, người kia nhận tin báo.
 | `/giavang 15tr` · `/giavang 150tr lượng` · `/giavang` | Cập nhật / xem giá vàng hôm nay (1 chỉ) |
 | `/tietkiem` | Từng hũ: tiền + vàng (≈ giá trị) + % mục tiêu |
 
+**Xoá hũ** — `/xoahu mua nhà` (tiền còn lại về **quỹ chung**) · `/xoahu mua nhà vợ` (về vợ): bot hỏi lại, bấm **Xoá hũ** mới xoá.
+- Hũ còn vàng: chọn **chuyển vàng sang hũ khác** (giữ nguyên số chỉ) hoặc **bán** theo giá đang dùng (tiền về quỹ chung / người đã nói).
+- Tổng tài sản không đổi (tiền chỉ đổi chỗ). Lịch sử bỏ / lấy giữ nguyên; khoản cũ của hũ đã xoá **không huỷ / sửa được**. Tên hũ dùng lại được.
+- Hũ đang âm → không xoá được (kiểm tra / huỷ khoản nhập sai trước). Hũ Tiết kiệm mặc định không xoá được.
+- Sau khi xoá, nhắn "rút quỹ y tế 2tr" (hũ không còn) sẽ thành khoản chi Y tế như hũ lạ.
+
 Vàng: 1 chỉ = 10 phân, 1 lượng = 1 cây = 10 chỉ. Giá trị vàng tính theo giá mới nhất: `/giavang` hoặc lần mua/bán gần nhất. Giá gõ nhầm khi mua/bán → bấm Huỷ; `/giavang` nhầm → gõ lại giá đúng. Rút tiền hũ để mua vàng: nhắn 2 tin (`rút hũ 28tr` rồi `mua vàng 2 chỉ 28tr`).
 
 ## 5. Hỏi và xem tổng hợp
@@ -57,6 +63,37 @@ Vàng: 1 chỉ = 10 phân, 1 lượng = 1 cây = 10 chỉ. Giá trị vàng tín
 | `/baocao` · `/baocao trước` · `/baocao 10` | Báo cáo tháng: **ảnh tóm tắt** + **file HTML** đầy đủ. **20:00 ngày 1** hằng tháng tự gửi báo cáo tháng trước cho cả 2 người (lỗi thì gửi bù tới ngày 3; đổi ngày / giờ bằng `/cauhinh`) |
 | `/dieuchinh vợ +12tr [lý do]` · `/dieuchinh vợ = 3tr` | Chỉnh số dư cho khớp tiền thật (quên khai số dư ban đầu, lệch tiền mặt). Không tính thu/chi; người kia được báo; có nút Huỷ |
 | `/ghichu` · `/help` | Ghi chú nợ · danh sách lệnh |
+
+## 4b. Nợ — vay / cho vay (tính vào số dư)
+
+| Nhắn | Ghi | Số dư |
+|---|---|---|
+| `vay anh Nam 5tr` | Mình nợ anh Nam 5tr | Quỹ chung **+5tr** |
+| `trả anh Nam 2tr` | Trả gốc (khoản cũ nhất với anh Nam) | Quỹ chung −2tr |
+| `trả lãi anh Nam 200k` | Lãi vay — **tính vào chi** | −200k |
+| `cho chị Lan vay 3tr` | Chị Lan nợ mình 3tr | Quỹ chung **−3tr** |
+| `chị Lan trả 1tr` · `chị Lan trả lãi 200k` | Thu gốc · lãi cho vay (tính vào thu) | +1tr · +200k |
+| `/no` · `còn nợ ai bao nhiêu` | Mình nợ ai, ai nợ mình, còn bao nhiêu | — |
+| `/nodau vay anh Tú 50tr` · `/nodau cho chị Lan vay 3tr` | Nợ **có từ trước khi dùng bot** (tiền đã nằm trong số dư ban đầu) | Không đổi |
+
+- Tiền mặc định vào / ra **quỹ chung**. Nói rõ người thì vào / ra người đó: `vợ vay anh Nam 5tr`, `vay anh Nam 5tr vào vợ`, `tôi vay …` (người nhắn).
+- "trả / thu" chỉ thành trả nợ khi người đó **đang có khoản nợ đúng chiều** — `trả anh thợ 500k` vẫn là khoản chi. Trả nhiều hơn số còn nợ của khoản cũ nhất → bot báo, nhắn tách từng khoản (xem `/no`).
+- Ghi nhầm → **Huỷ** (khoản vay đã có lần trả: huỷ các lần trả trước). Khoản nợ / lãi vay **không sửa số tiền** — Huỷ rồi nhắn lại.
+- Câu không rõ người / chiều ("nợ 2tr", "trả nợ 2tr", "nợ chị Lan 1tr") vẫn chỉ lưu **ghi chú nợ** như trước (`/ghichu`).
+- `/sodu` thêm **Đang nợ · Cho vay · Tài sản ròng** (= tài sản − đang nợ + cho vay); báo cáo tháng cũng có.
+- Gõ không dấu "tra lai" (lãi hay lại?) bot không đoán — gõ có dấu.
+
+## 4c. Ngân sách theo danh mục
+
+| Gõ | Kết quả |
+|---|---|
+| `/ngansach thức ăn 5tr` · `/ngansach tiền ăn 5tr` | Đặt hạn mức tháng (tên danh mục hoặc từ khoá) — gõ lại = sửa |
+| `/ngansach thức ăn 0` | Bỏ ngân sách |
+| `/ngansach` | Bảng tháng này: đã chi / hạn mức · còn lại · thanh % |
+
+- Tính **chi của cả nhà** (vợ + chồng + quỹ chung + chi từ hũ), theo **ngày của khoản chi**.
+- Chi vượt **80%** và **100%** → bot báo **cả 2 người**, mỗi mốc 1 lần / tháng (kể cả khi sửa số tiền, đổi danh mục, bấm "đã trả" khoản định kỳ). Đổi mốc: `/cauhinh ngan_sach.canh_bao_phan_tram 90`. Đổi hạn mức giữa tháng → tính lại mốc theo hạn mức mới.
+- Báo cáo tháng có bảng ngân sách.
 
 ## 5b. Khoản định kỳ (tiền điện, học phí, lương...)
 
@@ -83,8 +120,8 @@ Vàng: 1 chỉ = 10 phân, 1 lượng = 1 cây = 10 chỉ. Giá trị vàng tín
 
 **Thiếu khi dùng hằng ngày — nên làm sớm**
 1. ✅ **Sửa số tiền khoản đã ghi** (đã code 12/11): trong 1 ngày, chỉ số tiền, chỉ người nhập.
-2. **Quản lý hũ**: đổi tên / ẩn / sửa mục tiêu.
-3. **Thống kê nợ**: hỏi nợ → "chưa hỗ trợ"; ghi chú nợ không vào số dư.
+2. ✅ **Xoá hũ** (đã code 15/11, mục 4): tiền về quỹ chung / người đã nói; vàng chuyển hũ hoặc bán. Không làm đổi tên (người dùng chốt).
+3. ✅ **Nợ** (đã code 15/11, mục 4b): vay / cho vay / trả / lãi tính vào số dư, `/no`, `/nodau`.
 4. ✅ **Điều chỉnh số dư qua chat**: `/dieuchinh` (đã code 11/11).
 
 **Đã chốt 10/11**
@@ -96,8 +133,8 @@ Vàng: 1 chỉ = 10 phân, 1 lượng = 1 cây = 10 chỉ. Giá trị vàng tín
 
 **Gợi ý thêm (chưa có trong kế hoạch)**
 
-9. **Ngân sách theo danh mục** ("tiền ăn tối đa 5tr/tháng") + cảnh báo gần vượt.
+9. ✅ **Ngân sách theo danh mục** (đã code 15/11, mục 4c).
 10. ✅ **Khoản định kỳ** (đã code 14/11): mục 5b. Để sau: nhắc theo ngày riêng từng khoản, chu kỳ quý / năm, chuyển tiền định kỳ.
 11. **Tách ví / tài khoản ngân hàng**: hiện số dư gộp chung.
 
-Còn lại nên làm: **2** (quản lý hũ), **3** (thống kê nợ), **9** (ngân sách theo danh mục).
+Còn lại: **11** (tách ví / tài khoản ngân hàng).

@@ -323,7 +323,7 @@ for (const backend of BACKENDS) {
       await h.text(CHONG, 'học thêm cho con trai 500k');
       await h.text(CHONG, 'mua sữa cho các con 150k');
       await h.text(CHONG, 'lương 20tr');
-      await h.text(VO, 'vay anh Nam 5tr'); // ghi chú nợ, không tính
+      await h.text(VO, 'nợ anh Nam 5tr'); // ghi chú nợ, không tính (Phase 8b: "vay anh Nam 5tr" ghi nợ thật)
       h.tg.take();
       await h.text(VO, 'tiền điện 400k');
       const cancel = button(sentTo(h.tg.take(), VO)[0], 'gd:');
@@ -447,7 +447,8 @@ for (const backend of BACKENDS) {
       const before = await count(env.db, 'giao_dich');
       assert.equal(await ask(VO, 'abc xyz?'), QUERY_HELP);
       assert.equal(await count(env.db, 'tin_nhan_goc', "chi_tiet_loi = 'CAU_HOI_CHUA_HIEU' AND trang_thai_xu_ly = 'DA_BO_QUA'"), 1);
-      assert.equal(await ask(VO, 'tháng này trả nợ bao nhiêu'), NO_TEXT);
+      // Phase 8b: hỏi nợ → khoản nợ đang mở
+      assert.match(await ask(VO, 'tháng này trả nợ bao nhiêu'), /^Không có khoản nợ nào đang mở/);
       // Huỷ/xoá qua chữ → hướng dẫn nút, không ghi, không lưu tin
       const tinTruoc = await count(env.db, 'tin_nhan_goc');
       assert.equal(await ask(VO, 'hủy lệnh xác nhận được không'), ACTION_HELP);

@@ -39,6 +39,8 @@ Copy-Item wrangler.toml.example wrangler.toml   # wrangler.toml không commit
 ```
 Trong `wrangler.toml` đổi `ENVIRONMENT = "production"` (tắt `/api/parser/preview`). Khối `[triggers]` phải là `crons = ["0 18 * * *", "0 0-15 * * *"]`: job hết hạn 1h sáng VN + lượt mỗi giờ 7h–22h VN (nhắc khoản định kỳ + báo cáo tháng; ngày / giờ làm việc đọc từ bảng `cau_hinh`, mặc định nhắc 20h ngày 2, báo cáo 20h ngày 1 — đổi bằng `/cauhinh`, không cần deploy). `deploy.ps1` bước 2 tự đổi lịch cũ `0 1-14 1-3 * *` sang lịch mới. Lịch cũ chưa đổi vẫn chạy được báo cáo nhưng chỉ ngày 1–3.
 
+**Phase 8 (xoá hũ, nợ, ngân sách, 15/11)**: chạy `temp/neon/11_xoa_hu_ngan_sach.sql` trên Neon (sau file 10) **trước khi deploy code**, rồi `deploy.ps1 -From 3 -To 4 -Yes`. Phần nợ không cần SQL. Code mới thiếu bảng ngân sách vẫn ghi khoản được (bỏ cảnh báo), nhưng `/ngansach` báo lỗi.
+
 **Phase 7 (khoản định kỳ, 14/11)**: chạy `temp/neon/10_khoan_dinh_ky.sql` trên Neon **trước khi deploy code** (code mới thiếu bảng → nút Huỷ khoản lỗi; cấu hình tự dùng mặc định). Rồi `deploy.ps1 -From 2 -To 4 -Yes` (từ bước 2 để đổi lịch cron). Bước 5 (nếu chạy) báo lỗi khi Neon thiếu bảng 0008.
 
 Tạo secret webhook ngẫu nhiên (chỉ chữ, số, `_`, `-`; 32–64 ký tự), ví dụ:

@@ -18,6 +18,8 @@ import { monthPeriod, previousPeriod, type Period } from '../query/period-parser
 import { BalanceService, type HolderBalancesResult } from './balance-service.ts';
 import { resolveClock, type ServiceOptions } from './common.ts';
 import { SavingsService, type SavingsSummary } from './savings-service.ts';
+import { BudgetService } from './budget-service.ts';
+import { sumDebtAsOf } from '../db/repositories/debt-repository.ts';
 
 // Phase 6: số liệu báo cáo tháng (ảnh tóm tắt + file HTML). Chỉ đọc. Không giới hạn số dòng như tin nhắn.
 const EXPENSE = ['CHI', 'PHI', 'LAI_VAY'] as const;
@@ -57,6 +59,10 @@ export interface ReportData {
   // Mọi khoản thu / chi trong kỳ, cũ → mới
   rows: TxRow[];
   rowsTruncated: boolean;
+  // Ngân sách đang đặt (hạn mức hiện tại) + đã chi trong kỳ
+  budgets: Array<{ ten: string; limit: number; spent: number }>;
+  // Dư nợ 2 chiều đến cuối kỳ (Phase 8b)
+  debts: { dangNo: number; choVay: number };
 }
 
 // "/baocao 10" → tháng 10 năm nay; null = tháng hiện tại
@@ -105,6 +111,14 @@ export class ReportService {
         listTransfersFiltered(this.db, { from: shown.from, to: shown.to, statuses: ['DA_XAC_NHAN'] }, TRANSFER_LIMIT + 1),
       ]);
     const truncated = rows.length > REPORT_ROW_LIMIT;
+    // Chưa chạy migration 0009 → bỏ bảng ngân sách, báo cáo vẫn dựng được
+    const [budgets, debts] = await Promise.all([
+      new BudgetService(this.db, { now: this.now })
+        .overview(period.from.slice(0, 7))
+        .then((lines) => lines.map((l) => ({ ten: l.budget.ten_danh_muc, limit: l.budget.so_tien_thang, spent: l.spent })))
+        .catch(() => []),
+      sumDebtAsOf(this.db, asOf),
+    ]);
     return {
       title: `Tháng ${Number(period.from.slice(5, 7))}/${period.from.slice(0, 4)}`,
       period: shown,
@@ -130,6 +144,8 @@ export class ReportService {
       transfersTruncated: transfers.length > TRANSFER_LIMIT,
       rows: rows.slice(0, REPORT_ROW_LIMIT).reverse(),
       rowsTruncated: truncated,
+      budgets,
+      debts,
     };
   }
 }

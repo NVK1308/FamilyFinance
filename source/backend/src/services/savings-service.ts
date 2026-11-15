@@ -23,6 +23,8 @@ import {
   latestGoldMarketPrice,
   latestGoldPrice,
   listActiveJars,
+  listAllJars,
+  deactivateJar,
   listRecentSavingsMoves,
   markSavingsMoveCancelled,
   sumSavingsCash,
@@ -69,6 +71,20 @@ export interface GoldPrice {
 }
 
 // Mọi hũ: từng hũ + tổng tiền, tổng vàng, giá trị vàng (null = chưa định giá)
+export interface JarContents {
+  tien: number;
+  vangPhan: number;
+  gia: GoldPrice | null;
+  otherJars: HuRecord[];
+}
+
+// Vàng khi xoá hũ: không có / chuyển sang hũ khác / bán theo giá đang dùng
+export type GoldDisposal = { kind: 'NONE' } | { kind: 'MOVE'; toJarId: string } | { kind: 'SELL' };
+
+export type DeleteJarResult =
+  | { kind: 'DELETED'; jar: HuRecord; tien: number; vangPhan: number; goldTo: HuRecord | null; goldSold: number | null; dest: SavingsSourceId }
+  | { kind: 'DONE'; jar: HuRecord };
+
 export interface SavingsSummary {
   rows: JarBalance[];
   gia: GoldPrice | null;
@@ -335,7 +351,11 @@ export class SavingsService {
       if (move.giao_dich_id) {
         throw new DomainError('CANCEL_BLOCKED', 'Khoản này đi kèm khoản chi — huỷ khoản chi đó');
       }
+      if (move.idempotency_key.startsWith('xh:')) {
+        throw new DomainError('CANCEL_BLOCKED', 'Dòng chuyển khi xoá hũ — không huỷ được');
+      }
       const jar = await this.requireJar(move, tx);
+      assertJarOpen(jar);
       if ((await markSavingsMoveCancelled(tx, move.id, nowIso)) === 0) {
         return { changed: false, move: (await getSavingsMoveById(tx, move.id)) ?? move, jar };
       }
@@ -356,6 +376,9 @@ export class SavingsService {
   // Huỷ khoản chi trả từ hũ → huỷ luôn dòng RUT đi kèm (cùng transaction)
   async cancelLinked(tx: DatabaseAdapter, giaoDichId: string, actor: MemberId, nowIso: string): Promise<void> {
     const move = await getSavingsMoveByTransaction(tx, giaoDichId);
+    if (move && move.trang_thai === 'HOAN_TAT') {
+      assertJarOpen(await this.requireJar(move, tx));
+    }
     if (!move || (await markSavingsMoveCancelled(tx, move.id, nowIso)) === 0) {
       return;
     }
@@ -468,6 +491,84 @@ export class SavingsService {
     return listRecentSavingsMoves(this.db, limit);
   }
 
+  // Tên mọi hũ kể cả đã xoá (lịch sử bỏ / lấy)
+  async allJarNames(): Promise<Map<string, string>> {
+    return new Map((await listAllJars(this.db)).map((j) => [j.id, j.ten]));
+  }
+
+  // ---------- Xoá hũ (Phase 8a) ----------
+
+  // Hũ đang dùng theo tên gõ (bỏ dấu), không phải hũ mặc định
+  async findJarToDelete(rawName: string): Promise<HuRecord | 'MAC_DINH' | null> {
+    const { key } = normalizeJarName(rawName);
+    const jar = key ? await getJarByNormalizedName(this.db, key) : null;
+    if (jar?.id === DEFAULT_JAR_ID) {
+      return 'MAC_DINH';
+    }
+    return jar;
+  }
+
+  // Tiền + vàng còn trong hũ hôm nay, giá vàng đang dùng, các hũ khác (nơi chuyển vàng)
+  async jarContents(huId: string, db: DatabaseAdapter = this.db): Promise<JarContents> {
+    const today = toVnDate(this.now());
+    const [cash, gold, gia, jars] = await Promise.all([sumSavingsCash(db, today, huId), sumGoldByJar(db, today), this.goldPrice(today, db), listActiveJars(db)]);
+    return { tien: cash.tien, vangPhan: gold.get(huId) ?? 0, gia, otherJars: jars.filter((j) => j.id !== huId) };
+  }
+
+  // Xoá hũ: ẩn hũ trước (khoá dòng, bấm 2 lần → 1 lần) → tính tiền / vàng lúc bấm → chuyển vàng (sang hũ khác / bán)
+  // + tiền về đích. Hũ âm / còn vàng mà chưa chọn cách xử lý → lỗi, rollback cả lệnh.
+  async deleteJar(huId: string, member: MemberId, dest: SavingsSourceId, gold: GoldDisposal): Promise<DeleteJarResult> {
+    const nowIso = this.now().toISOString();
+    const today = toVnDate(this.now());
+    const result = await this.db.transaction(async (tx): Promise<DeleteJarResult> => {
+      const jar = await getJarById(tx, huId);
+      if (!jar) {
+        throw new DomainError('NOT_FOUND', 'Không tìm thấy hũ');
+      }
+      if (jar.id === DEFAULT_JAR_ID) {
+        throw new DomainError('INVALID_INPUT', 'Hũ Tiết kiệm mặc định không xoá được');
+      }
+      if ((await deactivateJar(tx, huId, nowIso)) === 0) {
+        return { kind: 'DONE', jar };
+      }
+      const c = await this.jarContents(huId, tx);
+      if (c.tien < 0 || c.vangPhan < 0) {
+        throw new DomainError('INVALID_INPUT', `Hũ ${jar.ten} đang âm — kiểm tra / huỷ khoản nhập sai trước khi xoá`);
+      }
+      const base = { huId, memberId: member, ngay: today, messageId: null, giaoDichId: null, nowIso };
+      let goldTo: HuRecord | null = null;
+      let goldSold: number | null = null;
+      if (c.vangPhan > 0) {
+        if (gold.kind === 'NONE') {
+          throw new DomainError('INVALID_INPUT', `Hũ ${jar.ten} còn ${c.vangPhan} phân vàng — gõ lại /xoahu để chọn chuyển hoặc bán`);
+        }
+        if (gold.kind === 'MOVE') {
+          goldTo = await getJarById(tx, gold.toJarId);
+          if (!goldTo || !Boolean(goldTo.is_active) || goldTo.id === huId) {
+            throw new DomainError('INVALID_INPUT', 'Hũ nhận vàng không còn — gõ lại /xoahu');
+          }
+          // Chuyển vàng giữa 2 hũ: không có tiền, không nguồn (không đụng tiền mặt của ai)
+          await this.insert(tx, { ...base, chieu: SAVINGS_DIRECTION.RUT, loaiTaiSan: ASSET_TYPE.VANG, soLuongPhan: c.vangPhan, soTien: null, nguon: null, key: `xh:${huId}:vang-ra`, ghiChu: `Xoá hũ ${jar.ten}: chuyển vàng sang hũ ${goldTo.ten}` });
+          await this.insert(tx, { ...base, huId: goldTo.id, chieu: SAVINGS_DIRECTION.NOP, loaiTaiSan: ASSET_TYPE.VANG, soLuongPhan: c.vangPhan, soTien: null, nguon: null, key: `xh:${huId}:vang-vao`, ghiChu: `Xoá hũ ${jar.ten}: nhận vàng` });
+        } else {
+          if (!c.gia) {
+            throw new DomainError('INVALID_INPUT', 'Chưa có giá vàng — nhập /giavang <giá 1 chỉ> rồi xoá lại');
+          }
+          goldSold = Math.round((c.vangPhan * goldPricePerChi(c.gia)) / 10);
+          await this.insert(tx, { ...base, chieu: SAVINGS_DIRECTION.RUT, loaiTaiSan: ASSET_TYPE.VANG, soLuongPhan: c.vangPhan, soTien: goldSold, nguon: dest, key: `xh:${huId}:vang-ban`, ghiChu: `Xoá hũ ${jar.ten}: bán vàng` });
+        }
+      }
+      if (c.tien > 0) {
+        await this.insert(tx, { ...base, chieu: SAVINGS_DIRECTION.RUT, loaiTaiSan: ASSET_TYPE.TIEN, soLuongPhan: null, soTien: c.tien, nguon: dest, key: `xh:${huId}:tien`, ghiChu: `Xoá hũ ${jar.ten}` });
+      }
+      const after = (await getJarById(tx, huId)) ?? jar;
+      await audit(tx, TABLE_NAME.HU, huId, AUDIT_ACTION.CANCEL, jar, after, member, nowIso);
+      return { kind: 'DELETED', jar: after, tien: c.tien, vangPhan: c.vangPhan, goldTo, goldSold, dest };
+    });
+    this.jarNamesCache = null;
+    return result;
+  }
+
   private async requireJar(move: HuTietKiemRecord, db: DatabaseAdapter = this.db): Promise<HuRecord> {
     const jar = await getJarById(db, move.hu_id ?? DEFAULT_JAR_ID);
     if (!jar) {
@@ -533,6 +634,13 @@ export class SavingsService {
       console.error('Hũ tiết kiệm: tính cảnh báo lỗi, bỏ cảnh báo', error);
       return false;
     }
+  }
+}
+
+// Hũ đã xoá: khoá sổ — không huỷ / sửa dòng cũ (tiền không "quay lại" hũ đã ẩn)
+export function assertJarOpen(jar: HuRecord): void {
+  if (!Boolean(jar.is_active)) {
+    throw new DomainError('CANCEL_BLOCKED', `Hũ ${jar.ten} đã xoá — khoản cũ của hũ không huỷ / sửa được`);
   }
 }
 

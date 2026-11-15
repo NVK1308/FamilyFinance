@@ -5,6 +5,7 @@ import {
   getMessageById,
   getMessageByUpdateId,
   getJarById,
+  getLoanById,
   getSavingsMoveByIdempotencyKey,
   getSavingsMoveByTransaction,
   getTransactionByIdempotencyKey,
@@ -20,6 +21,7 @@ import type {
   GiaoDichRecord,
   HuRecord,
   HuTietKiemRecord,
+  KhoanNoRecord,
   TinNhanGocRecord,
   YeuCauXacNhanRecord,
 } from '../db/types.ts';
@@ -78,6 +80,8 @@ export type RecordOutcome =
       // Vàng: đơn giá lệch > 30% so với giá đang dùng → giá đang dùng (đồng/chỉ), chỉ cảnh báo
       giaVangThamChieu?: number | null;
     }
+  // Phase 8b: vay / cho vay / trả / thu gốc / trả lãi ghi từ tin nhắn
+  | { kind: 'DEBT'; duplicate: boolean; message: TinNhanGocRecord; transaction: GiaoDichRecord; loan: KhoanNoRecord }
   | { kind: 'IGNORED'; duplicate: boolean; message: TinNhanGocRecord; reason: string }
   | { kind: 'NOT_TRANSACTION'; parsed: ParseResult };
 
@@ -135,6 +139,10 @@ export async function loadExistingOutcome(db: DatabaseAdapter, updateId: number)
   const key = telegramKey(updateId);
   const confirmations = await listConfirmationsByMessage(db, message.id);
   const transaction = await getTransactionByIdempotencyKey(db, key);
+  const loan = transaction?.khoan_no_id ? await getLoanById(db, transaction.khoan_no_id) : null;
+  if (transaction && loan) {
+    return { kind: 'DEBT', duplicate: true, message, transaction, loan };
+  }
   if (transaction) {
     const category = transaction.danh_muc_id ? await getCategoryById(db, transaction.danh_muc_id) : null;
     const chonDanhMuc = category?.ma_danh_muc === CATEGORY_CODE.CHI_KHAC || category?.ma_danh_muc === CATEGORY_CODE.THU_KHAC;

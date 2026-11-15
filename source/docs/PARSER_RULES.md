@@ -46,12 +46,25 @@ Parser giữ nguyên kết quả, chỉ thêm cờ `so_tien_mo_ho`. Việc quy�
 | Câu | Kết quả |
 |---|---|
 | Không tiền, không loại, không danh mục ("ok", "abc", "đã nhận") | `NOT_TRANSACTION`, không lưu tin |
-| Có chữ "nợ" (có dấu), loại VAY/TRA_NO, danh mục THU_HOI_NO ("thu hồi nợ 2tr", "nợ 2tr", "cho vay anh Nam 5tr", "thu: thu hồi nợ 2tr") | Ghi chú nợ: tin DA_BO_QUA, `chi_tiet_loi = GHI_CHU_NO`, không giao dịch, không tính số dư (Q6) |
+| Có chữ "nợ" (có dấu), loại VAY/TRA_NO, danh mục THU_HOI_NO — mà không thành câu nợ có cấu trúc (Phase 8b, dưới bảng) ("thu hồi nợ 2tr", "nợ 2tr", "trả nợ 2tr", "nợ chị Lan 1tr", "thu: thu hồi nợ 2tr") | Ghi chú nợ: tin DA_BO_QUA, `chi_tiet_loi = GHI_CHU_NO`, không giao dịch, không tính số dư (Q6) |
 | "thu:/chi: nợ của a 1tr" (NO_CUA_ANH), "lãi vay 200k", danh mục LAI_CHO_VAY | Ghi bình thường, không phải ghi chú |
 | "điều chỉnh: 1tr" | DA_BO_QUA `DIEU_CHINH_CHUA_HO_TRO_CHAT` |
 | Thiếu tiền ("tiền ăn") / 2 số ("3 hay 4 triệu") | DA_BO_QUA `THIEU_SO_TIEN` / `SO_TIEN_MO_HO`, bot nhắc nhắn lại |
 | Có tiền, chưa rõ danh mục / lệch loại ("cafe 30k", "50k", "chi 50k abc", "thu: tiền ăn 50k") | Ghi ngay vào **Chi khác** / **Thu khác** (chưa rõ loại → Chi), bot hiện nút đổi danh mục + đổi Thu↔Chi (Q4) |
 | Chưa rõ loại nhưng có danh mục ("quà tặng 200k") | Giữ danh mục; loại theo danh mục (CA_HAI → Chi), có nút đổi |
+
+**Phase 8b — câu nợ có cấu trúc** (`src/parser/debt-detector.ts`, chạy trước parser trong `recordFromText` khi câu có vay / mượn / nợ / trả / thu / lãi): chỉ trả kết quả khi chắc chắn, còn lại về luồng cũ ở bảng trên.
+
+| Câu | Ý định | Điều kiện |
+|---|---|---|
+| `vay anh Nam 5tr`, `mượn chị Hoa 2tr`, `vay ngân hàng 10tr` | BORROW | Có từ vay / mượn **có dấu** ("vậy", "muốn" không phải) |
+| `cho chị Lan vay 3tr`, `cho vay anh Nam 5tr` (không dấu "cho chi Lan vay" cũng nhận) | LEND | |
+| `trả (nợ) anh Nam 2tr` · `trả lãi anh Nam 200k` | REPAY · INTEREST_PAY | Anh Nam có khoản **đi vay** đang mở |
+| `chị Lan trả (nợ) 1tr`, `thu nợ chị Lan 1tr` · `chị Lan trả lãi 200k` | COLLECT · INTEREST_COLLECT | Chị Lan có khoản **cho vay** đang mở |
+
+- Đối tác: 1–4 chữ, không số, không phải người trong nhà / đại từ / chỉ xưng hô, không chứa quỹ / hũ / thẻ, không phải "nợ của …" (danh mục Nợ của anh). Khớp khoản theo tên bỏ dấu + bỏ xưng hô ("anh Nam" = "a Nam" = "Nam").
+- Người giữ tiền: chủ ngữ ("vợ vay…", "tôi / mình / em / anh vay…" = người nhắn) hoặc "… vào / từ / của vợ | chồng | quỹ"; không nói → quỹ chung.
+- "hôm nay / hôm qua / hôm kia" ở đầu hoặc cuối câu → ngày. Gõ không dấu "tra lai" (lãi / lại) → không đoán.
 
 Quy tắc chữ "nợ" có thể bắt nhầm câu thường có chữ "nợ": khi đó tin chỉ thành ghi chú, không mất tiền, người dùng nhắn lại.
 

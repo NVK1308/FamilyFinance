@@ -47,7 +47,7 @@ Xét theo thứ tự:
 
 | Loại | Nhận biết | Trả lời |
 |---|---|---|
-| Nợ | Có từ nợ, trừ "lãi cho vay" | "Chưa hỗ trợ thống kê nợ — xem /ghichu" |
+| Nợ | Có từ nợ, trừ "lãi cho vay" | Khoản nợ đang mở 2 chiều (như `/no`, Phase 8b) |
 | Chuyển tiền | `chuyển` / `ck` (so trên chuỗi có dấu: "chuyến đi", "vận chuyển" không tính; không dấu thì trừ "van chuyen", "chuyen di/xe/bay"), hoặc `chưa/chờ xác nhận`; câu có "quỹ chung" không tính | Xem mục 3a |
 | Theo danh mục | theo danh mục, danh mục nào, vào gì, nhiều nhất vào | Bảng danh mục giảm dần (≤ 8 dòng). Khoản không có danh mục ghi theo loại (Lãi vay, Phí) |
 | Theo đối tượng | từng người, theo đối tượng, cho ai | Bảng theo đối tượng, có dòng "Không ghi đối tượng" |
@@ -120,7 +120,10 @@ Mỗi dòng giao dịch: `ngày số tiền danh mục (người thực hiện)`
 
 - Chi = CHI + PHI + LAI_VAY; Thu = THU.
 - Chỉ tính giao dịch `HOAN_TAT`, chưa xoá (`TX_IN_RANGE`).
-- Không tính vào thu/chi: VAY, TRA_NO, DIEU_CHINH, chuyển nội bộ, nộp/rút quỹ, ghi chú nợ.
+- Không tính vào thu/chi: VAY, TRA_NO, DIEU_CHINH, chuyển nội bộ, nộp/rút quỹ, ghi chú nợ. Lãi vay (LAI_VAY) là chi; lãi cho vay thu về là THU danh mục LAI_CHO_VAY.
+- **Số dư** tính VAY / TRA_NO theo chiều khoản nợ (đi vay +, trả −; cho vay −, thu về +). Dư nợ đến ngày X = giải ngân − trả / thu gốc trong `lich_su_no` có ngày ≤ X. Tài sản ròng = tài sản − đang nợ + cho vay.
+- Nợ khai bằng `/nodau` ghi ngày **trước** ngày áp dụng số dư ban đầu → không đổi số dư, chỉ để theo dõi dư nợ.
+- **Ngân sách** (Phase 8c): đã chi = CHI hoàn tất theo `danh_muc_id`, cả nhà, theo `ngay_giao_dich` trong tháng (không gồm PHI / LAI_VAY vì không có danh mục).
 - Câu hỏi chỉ đọc DB.
 - Giá trị trong SQL luôn truyền qua tham số; tên cột cố định trong code.
 

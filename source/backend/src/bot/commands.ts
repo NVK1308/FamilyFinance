@@ -18,6 +18,8 @@ import { parsePeriod } from '../query/period-parser.ts';
 import type { QuerySpec } from '../query/types.ts';
 import { goldPricePerChi, isFarFromPrice, type SavingsSummary } from '../services/savings-service.ts';
 import type { BotContext } from './handler.ts';
+import { sumDebtAsOf } from '../db/repositories/debt-repository.ts';
+import { detectDebt } from '../parser/debt-detector.ts';
 import { SETTING_DEFS, SETTING_KEYS, type Settings } from '../config/settings.ts';
 import { loadSettings, updateSetting } from '../services/settings-service.ts';
 import { dueDateOf, monthOf, shiftMonth } from '../services/recurring-service.ts';
@@ -38,6 +40,11 @@ import {
   transferReceiverKeyboard,
   transferReceiverText,
   formatGold,
+  deleteJarConfirm,
+  BUDGET_SYNTAX,
+  budgetOverviewText,
+  DEBT_SYNTAX,
+  debtSummaryText,
   goldPriceLine,
   transactionLine,
   savingsNoticeText,
@@ -86,6 +93,14 @@ export async function runCommand(
       return reply(await savingsJarText(ctx));
     case 'taohu':
       return reply(await createJar(ctx, member, args));
+    case 'xoahu':
+      return deleteJarCommand(ctx, member, chatId, args);
+    case 'ngansach':
+      return reply(await budgetCommand(ctx, member, args));
+    case 'no':
+      return reply(debtSummaryText(await ctx.txs.debtService.listOpen()));
+    case 'nodau':
+      return reply(await declareOldDebt(ctx, member, args, updateId));
     case 'tietkiemdau':
       return declareSavings(ctx, member, chatId, args, updateId);
     case 'giavang':
@@ -109,7 +124,7 @@ async function balanceText(ctx: BotContext): Promise<string> {
   if (res.status !== 'OK') {
     return NEED_INITIAL;
   }
-  return balanceSummaryLines(res.nhom, res.tong, today, await ctx.savings.summary(today)).join('\n');
+  return balanceSummaryLines(res.nhom, res.tong, today, await ctx.savings.summary(today), await sumDebtAsOf(ctx.db, today)).join('\n');
 }
 
 const SAVINGS_LABEL: Record<string, string> = { KHAI_BAO: 'Khai báo', NOP: 'Bỏ vào', RUT: 'Lấy ra' };
@@ -125,7 +140,8 @@ const SAVINGS_SYNTAX = [
 async function savingsJarText(ctx: BotContext): Promise<string> {
   const today = toVnDate(ctx.now());
   const summary = await ctx.savings.summary(today);
-  const names = new Map(summary.rows.map((r) => [r.jar.id, r.jar.ten]));
+  // Tên cả hũ đã xoá (lịch sử bỏ / lấy cũ vẫn hiện đúng tên)
+  const names = await ctx.savings.allJarNames();
   const recent = (await ctx.savings.listRecent(SAVINGS_RECENT)).map((h) => {
     const who = h.nguon_id === null ? '' : h.nguon_id === 'QUY_CHUNG' ? ', quỹ chung' : `, ${memberName(h.nguon_id).toLowerCase()}`;
     // Dòng lấy ra đi kèm khoản chi → "Chi từ hũ"
@@ -692,4 +708,106 @@ async function settingsCommand(ctx: BotContext, member: ThanhVienRecord, args: s
   return res.before === res.after
     ? `${res.key} đang là ${res.after} — không đổi.`
     : `⚙️ ${res.key}: ${res.before} → ${res.after}. Áp dụng từ lượt chạy sau (tin nhắc đã gửi giữ lịch cũ).`;
+}
+
+// ---------- Phase 8a: xoá hũ ----------
+
+const DELETE_JAR_SYNTAX = 'Cú pháp: /xoahu <tên hũ> [vợ | chồng | quỹ] — tiền còn trong hũ về quỹ chung (hoặc người đã nói). Xem tên hũ: /tietkiem';
+
+// "/xoahu mua nhà vợ" → hỏi lại kèm nút (xoá thật khi bấm, tính tiền / vàng lúc bấm)
+async function deleteJarCommand(ctx: BotContext, member: ThanhVienRecord, chatId: number, args: string[]): Promise<BotAction[]> {
+  const send = (text: string, keyboard?: InlineKeyboard): BotAction[] => [{ type: 'send', chatId, text, ...(keyboard ? { keyboard } : {}) }];
+  if (!isSpouse(member)) {
+    return send('Chỉ vợ / chồng xoá được hũ.');
+  }
+  let words = cleanArgs(args);
+  let dest: 'VO' | 'CHONG' | 'QUY_CHUNG' = 'QUY_CHUNG';
+  const ascii = (t: string) => removeVietnameseDiacritics(t.toLowerCase());
+  const lastTwo = words.length >= 3 ? ascii(words.slice(-2).join(' ')) : '';
+  const last = words.length >= 2 ? ascii(words[words.length - 1]!) : '';
+  if (lastTwo === 'quy chung') {
+    words = words.slice(0, -2);
+  } else if (RECURRING_HOLDER[last]) {
+    dest = RECURRING_HOLDER[last] as 'VO' | 'CHONG' | 'QUY_CHUNG';
+    words = words.slice(0, -1);
+  }
+  if (words.length === 0) {
+    return send(DELETE_JAR_SYNTAX);
+  }
+  const jar = await ctx.savings.findJarToDelete(words.join(' '));
+  if (jar === 'MAC_DINH') {
+    return send('Hũ Tiết kiệm mặc định không xoá được.');
+  }
+  if (!jar) {
+    return send(`Không có hũ "${words.join(' ')}". ${DELETE_JAR_SYNTAX}`);
+  }
+  const view = deleteJarConfirm(jar, await ctx.savings.jarContents(jar.id), dest);
+  return send(view.text, view.keyboard);
+}
+
+// ---------- Phase 8c: ngân sách ----------
+
+// /ngansach · /ngansach thức ăn 5tr · /ngansach thức ăn 0 (bỏ)
+async function budgetCommand(ctx: BotContext, member: ThanhVienRecord, args: string[]): Promise<string> {
+  const ky = monthOf(toVnDate(ctx.now()));
+  if (args.length === 0) {
+    return budgetOverviewText(await ctx.budgets.overview(ky), ky);
+  }
+  if (!isSpouse(member)) {
+    return 'Chỉ vợ / chồng đặt được ngân sách.';
+  }
+  const words = cleanArgs(args);
+  const remove = words.length >= 2 && /^0+$/.test(words[words.length - 1]!);
+  const { name, amount } = remove ? { name: words.slice(0, -1).join(' '), amount: 0 } : splitNameAndAmount(words, member.id as MemberId);
+  if (!name.trim() || amount === null) {
+    return `Chưa hiểu. ${BUDGET_SYNTAX}`;
+  }
+  const res = await ctx.budgets.set(member.id as MemberId, name, amount);
+  switch (res.kind) {
+    case 'UNKNOWN_CATEGORY':
+      return `Không có danh mục chi "${name}". Danh mục: ${res.choices.join(', ')}.`;
+    case 'NO_BUDGET':
+      return `${res.category.ten_danh_muc} chưa có ngân sách.`;
+    case 'REMOVED':
+      return `💰 Đã bỏ ngân sách ${res.category.ten_danh_muc}.`;
+    default: {
+      const spent = await ctx.budgets.spentThisMonth(res.category.id);
+      return `💰 ${res.kind === 'SET' ? 'Đã đặt' : 'Đã sửa'} ngân sách ${res.category.ten_danh_muc}: ${formatMoney(res.soTien)} / tháng. Tháng này đã chi ${formatMoney(spent)}.`;
+    }
+  }
+}
+
+// ---------- Phase 8b: khai nợ có từ trước ----------
+
+// "/nodau vay anh Nam 50tr" · "/nodau cho chị Lan vay 3tr": ghi khoản nợ ngày trước mốc số dư ban đầu
+// (tiền đã nằm trong số dư ban đầu → không cộng / trừ thêm), chỉ để theo dõi còn nợ bao nhiêu
+async function declareOldDebt(ctx: BotContext, member: ThanhVienRecord, args: string[], updateId: number | undefined): Promise<string> {
+  if (!isSpouse(member)) {
+    return 'Chỉ vợ / chồng khai được nợ.';
+  }
+  const intent = detectDebt(args.join(' '), member.id as MemberId);
+  if (!intent || (intent.kind !== 'BORROW' && intent.kind !== 'LEND') || updateId === undefined) {
+    return `Chưa hiểu. ${DEBT_SYNTAX}`;
+  }
+  const initial = (await listActiveInitialBalances(ctx.db))[0];
+  if (!initial) {
+    return NEED_INITIAL;
+  }
+  const start = String(initial.ngay_ap_dung).slice(0, 10);
+  const before = new Date(Date.parse(`${start}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+  const lending = intent.kind === 'LEND';
+  const res = await ctx.txs.debtService.createLoan({
+    idempotencyKey: `api:${updateId.toString(16).padStart(12, '0')}`,
+    soTien: intent.amount,
+    ngay: before,
+    nguoiTaoId: member.id as MemberId,
+    nguoiGiuTienId: 'QUY_CHUNG',
+    chieuNo: lending ? 'CHO_VAY' : 'DI_VAY',
+    tenKhoanNo: `${lending ? 'Cho vay' : 'Vay'} ${intent.partner} (nợ cũ)`,
+    doiTac: intent.partner,
+    ghiChu: 'NO_DAU',
+    moTa: `Nợ cũ (khai báo): ${lending ? 'cho' : 'vay'} ${intent.partner}`,
+  });
+  const who = lending ? `${intent.partner} đang nợ mình` : `Mình đang nợ ${intent.partner}`;
+  return `📒 Đã khai nợ cũ: ${who} ${formatMoney(Number(res.loan.du_no_hien_tai))} (không đổi số dư). Trả / thu sau này nhắn như thường, vd "${lending ? `${intent.partner} trả 1tr` : `trả ${intent.partner} 1tr`}".`;
 }
