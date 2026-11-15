@@ -13,7 +13,8 @@ export class TelegramApiError extends Error {
 }
 
 export interface TelegramClient {
-  sendMessage(chatId: number, text: string, keyboard?: InlineKeyboard, forceReply?: string): Promise<void>;
+  // Trả message_id của tin đã gửi (client cũ / giả có thể không trả)
+  sendMessage(chatId: number, text: string, keyboard?: InlineKeyboard, forceReply?: string): Promise<number | void>;
   editMessageText(chatId: number, messageId: number, text: string, keyboard?: InlineKeyboard): Promise<void>;
   answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void>;
   sendPhoto(chatId: number, png: Uint8Array, caption: string): Promise<void>;
@@ -45,9 +46,11 @@ export class HttpTelegramClient implements TelegramClient {
     this.fetchFn = fetchFn;
   }
 
-  async sendMessage(chatId: number, text: string, keyboard?: InlineKeyboard, forceReply?: string): Promise<void> {
+  async sendMessage(chatId: number, text: string, keyboard?: InlineKeyboard, forceReply?: string): Promise<number | void> {
     const reply = forceReply ? { reply_markup: { force_reply: true, input_field_placeholder: forceReply.slice(0, 64) } } : {};
-    await this.call('sendMessage', { chat_id: chatId, text, ...(keyboard ? markup(keyboard) : reply) });
+    const data = (await this.call('sendMessage', { chat_id: chatId, text, ...(keyboard ? markup(keyboard) : reply) })) as { result?: { message_id?: unknown } };
+    const id = data?.result?.message_id;
+    return typeof id === 'number' ? id : undefined;
   }
 
   async editMessageText(chatId: number, messageId: number, text: string, keyboard?: InlineKeyboard): Promise<void> {
@@ -81,13 +84,14 @@ export class HttpTelegramClient implements TelegramClient {
     await this.check(method, res);
   }
 
-  private async call(method: string, body: Record<string, unknown>): Promise<void> {
+  private async call(method: string, body: Record<string, unknown>): Promise<unknown> {
     const res = await this.fetchFn(`https://api.telegram.org/bot${this.token}/${method}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
     await this.check(method, res);
+    return res.json().catch(() => null);
   }
 
   private async check(method: string, res: Response): Promise<void> {
@@ -140,7 +144,7 @@ async function runOne(
   action: BotAction,
   screenshotter: HtmlScreenshotter | null,
   shots: Map<string, Promise<Uint8Array | null>>,
-): Promise<void> {
+): Promise<unknown> {
   switch (action.type) {
     case 'send':
       return client.sendMessage(action.chatId, action.text, action.keyboard, action.forceReply);

@@ -19,11 +19,16 @@ import { QueryService } from '../services/query-service.ts';
 import { SavingsService } from '../services/savings-service.ts';
 import { KEYBOARD_EXCLUDED_CATEGORIES, TransactionService } from '../services/transaction-service.ts';
 import { TransferService } from '../services/transfer-service.ts';
-import { EditService, canEditAmount, type EditResult } from '../services/edit-service.ts';
+import { EditService, amountOnly, canEditAmount, type EditResult } from '../services/edit-service.ts';
+import { RecurringService, type PayResult } from '../services/recurring-service.ts';
+import type { DueRow } from '../db/repositories/recurring-repository.ts';
+import { RECURRING_CODE, RECURRING_PROMPT, dueButtonRow, dueDoneText, recurringPromptText, reminderView } from './recurring-replies.ts';
+import { loadSettings } from '../services/settings-service.ts';
+import { monthOf, shiftMonth } from '../services/recurring-service.ts';
 import type { ParsedQueryOrOtherResult } from '../parser/types.ts';
 import type { BotAction, InlineKeyboard, TgCallbackQuery, TgMessage, TgUpdate } from '../telegram/types.ts';
 import { decodeCallback, type CallbackData } from './callback-data.ts';
-import { parseCommand, runCommand } from './commands.ts';
+import { isSpouse, parseCommand, recurringListView, runCommand } from './commands.ts';
 import { memberChatId, otherMember } from './members.ts';
 import { ACTION_HELP, QUERY_HELP, queryAnswerText, remindText, splitTelegramText } from './query-replies.ts';
 import {
@@ -67,6 +72,7 @@ export interface BotContext {
   queries: QueryService;
   savings: SavingsService;
   edits: EditService;
+  recurring: RecurringService;
   // id bot (phần trước ':' của token) — kiểm tin nhắc sửa đúng do bot này gửi; null = không biết (test)
   botId: number | null;
 }
@@ -85,6 +91,7 @@ export function createBotContext(db: DatabaseAdapter, now: () => Date = () => ne
     queries: new QueryService(db, options),
     savings: txs.savingsService,
     edits: new EditService(db, txs.savingsService, balances, options),
+    recurring: new RecurringService(db, options),
   };
 }
 
@@ -111,13 +118,23 @@ function toIncoming(updateId: number, m: TgMessage & { text: string; from: { id:
   };
 }
 
-// Trả lời tin nhắc "✏️ Nhập số tiền mới … Mã: GD_…" do chính bot gửi → id giao dịch; không phải → null
-function editTarget(m: TgMessage, botId: number | null): string | null {
+// Trả lời tin nhắc do chính bot gửi (bắt đầu bằng prompt, cuối có "Mã: …") → mã; không phải → null
+function promptTarget(m: TgMessage, botId: number | null, prompt: string, code: RegExp): string | null {
   const r = m.reply_to_message;
-  if (!r?.from?.is_bot || (botId !== null && r.from.id !== botId) || !r.text?.startsWith(EDIT_PROMPT)) {
+  if (!r?.from?.is_bot || (botId !== null && r.from.id !== botId) || !r.text?.startsWith(prompt)) {
     return null;
   }
-  return r.text.match(EDIT_CODE)?.[1] ?? null;
+  return r.text.match(code)?.[1] ?? null;
+}
+
+// "✏️ Nhập số tiền mới … Mã: GD_…" → id giao dịch
+function editTarget(m: TgMessage, botId: number | null): string | null {
+  return promptTarget(m, botId, EDIT_PROMPT, EDIT_CODE);
+}
+
+// "🔁 Nhập số tiền thực … Mã: DKL_…" (nút Số khác của khoản định kỳ) → id lần đến hạn
+function recurringTarget(m: TgMessage, botId: number | null): string | null {
+  return promptTarget(m, botId, RECURRING_PROMPT, RECURRING_CODE);
 }
 
 async function activeMember(db: DatabaseAdapter, telegramUserId: number): Promise<ThanhVienRecord | null> {
@@ -138,6 +155,10 @@ export async function handleUpdate(ctx: BotContext, update: TgUpdate): Promise<B
       return [];
     }
     const incoming = toIncoming(update.update_id, m);
+    const dueTarget = recurringTarget(m, ctx.botId);
+    if (dueTarget) {
+      return recurringReplyActions(ctx, member, incoming, dueTarget, true);
+    }
     // Sửa lại chính câu trả lời "80k" của nút Sửa → sửa tiếp khoản đó
     const replyTarget = editTarget(m, ctx.botId);
     const res = replyTarget ? await ctx.edits.fromReply(incoming, member, replyTarget) : await ctx.edits.fromEditedMessage(incoming, member);
@@ -160,6 +181,10 @@ export async function handleUpdate(ctx: BotContext, update: TgUpdate): Promise<B
   const command = parseCommand(m.text);
   if (command) {
     return runCommand(ctx, member, m.chat.id, command.name, command.args, update.update_id);
+  }
+  const dueTarget = recurringTarget(m, ctx.botId);
+  if (dueTarget) {
+    return recurringReplyActions(ctx, member, incoming, dueTarget, false);
   }
   const target = editTarget(m, ctx.botId);
   if (target) {
@@ -430,7 +455,7 @@ async function handleCallback(ctx: BotContext, cq: TgCallbackQuery): Promise<Bot
       ? [{ type: 'edit', chatId: cq.message.chat.id, messageId: cq.message.message_id, text, ...(keyboard ? { keyboard } : {}) }]
       : [];
   try {
-    return await runCallback(ctx, member, data, answer, edit);
+    return await runCallback(ctx, member, data, answer, edit, cq.message);
   } catch (error) {
     if (error instanceof DomainError) {
       return [answer(DENIED[error.code] ?? error.message)];
@@ -448,9 +473,25 @@ async function runCallback(
   data: CallbackData,
   answer: Answer,
   edit: Edit,
+  source?: TgMessage,
 ): Promise<BotAction[]> {
   const me = member.id as MemberId;
   switch (data.kind) {
+    case 'dk':
+      return dueCallback(ctx, member, data.id, data.action, answer, source);
+    case 'dx': {
+      if (!isSpouse(member)) {
+        return [answer(DENIED.WRONG_CONFIRMER)];
+      }
+      const res = await ctx.recurring.stop(data.id, me);
+      if (!res.item) {
+        return [answer(DENIED.NOT_FOUND)];
+      }
+      const ky = monthOf(toVnDate(ctx.now()));
+      const view = await recurringListView(ctx, await loadSettings(ctx.db));
+      const redraw = await redrawReminders(ctx, [shiftMonth(ky, -1), ky], RecurringService.holdersOf(res.item));
+      return [answer(res.changed ? `Đã dừng ${res.item.ten}` : 'Khoản này đã dừng trước đó.'), ...edit(view.text, view.keyboard), ...redraw];
+    }
     case 'yc':
       return confirmCallback(ctx, me, data.id, data.accept, answer, edit);
     case 'dm':
@@ -482,7 +523,18 @@ async function runCallback(
     case 'gd': {
       const res = await ctx.txs.cancelTransaction(data.id, me, 'Huỷ qua bot', { chiNguoiTao: true });
       const view = await transactionView(ctx, res.transaction, false);
-      return [answer(res.changed ? 'Đã huỷ' : 'Khoản này đã huỷ trước đó.'), ...edit(view.text, view.keyboard)];
+      const due = res.lanDinhKy;
+      if (!due) {
+        return [answer(res.changed ? 'Đã huỷ' : 'Khoản này đã huỷ trước đó.'), ...edit(view.text, view.keyboard)];
+      }
+      // Khoản ghi từ định kỳ: lần về chờ → hiện lại nút; vẽ lại tin nhắc chung cho khớp
+      const reopened = due.trang_thai === 'CHO';
+      const text = reopened ? `${view.text}\n🔁 ${due.ten} tháng ${due.ky.slice(5)}/${due.ky.slice(0, 4)} về chờ — bấm lại bên dưới.` : view.text;
+      return [
+        answer('Đã huỷ'),
+        ...edit(text, reopened ? [dueButtonRow(due)] : undefined),
+        ...(await redrawReminders(ctx, [due.ky], RecurringService.holdersOf(due))),
+      ];
     }
     case 'ct': {
       let res;
@@ -561,4 +613,125 @@ async function confirmCallback(
     return [answer('Khoản này đã quá hạn xác nhận.'), ...edit(transferStateText(t, 'đã quá hạn xác nhận'))];
   }
   return [answer('Khoản này đã được xử lý.'), ...edit(transferStateText(t))];
+}
+
+// ---------- Phase 7: khoản định kỳ ----------
+
+// Vẽ lại tin nhắc chung đang còn nút của các người / kỳ (sau khi bấm, huỷ, dừng khoản)
+async function redrawReminders(ctx: BotContext, kys: readonly string[], members: readonly MemberId[]): Promise<BotAction[]> {
+  const actions: BotAction[] = [];
+  for (const ky of kys) {
+    for (const memberId of members) {
+      const live = await ctx.recurring.liveReminder(ky, memberId);
+      const chatId = live ? await memberChatId(ctx.db, memberId) : null;
+      if (!live || chatId === null) {
+        continue;
+      }
+      const view = reminderView(await ctx.recurring.dueLines(ky, memberId), ky, memberId, live.lanNhac);
+      actions.push({ type: 'edit', chatId, messageId: live.messageId, text: view.text, keyboard: view.keyboard });
+    }
+  }
+  return actions;
+}
+
+// Kết quả ghi / bỏ qua: tin kết quả (nếu có) + vẽ lại tin nhắc chung.
+// clicked: tin chứa nút vừa bấm — không phải tin nhắc chung (vd danh sách /dinhky) → gỡ nút cho khỏi bấm lại.
+async function dueResultActions(
+  ctx: BotContext,
+  chatId: number,
+  due: DueRow,
+  result: { text: string; keyboard?: InlineKeyboard } | null,
+  clicked?: TgMessage,
+): Promise<BotAction[]> {
+  const redraw = await redrawReminders(ctx, [due.ky], RecurringService.holdersOf(due));
+  const actions: BotAction[] = [];
+  if (result) {
+    actions.push({ type: 'send', chatId, text: result.text, ...(result.keyboard ? { keyboard: result.keyboard } : {}) });
+  }
+  const isReminder = redraw.some((a) => a.type === 'edit' && a.chatId === clicked?.chat.id && a.messageId === clicked?.message_id);
+  if (clicked && !isReminder && clicked.text) {
+    actions.push({ type: 'edit', chatId: clicked.chat.id, messageId: clicked.message_id, text: clicked.text });
+  }
+  return [...actions, ...redraw];
+}
+
+async function payResult(ctx: BotContext, res: Extract<PayResult, { kind: 'PAID' }>): Promise<{ text: string; keyboard?: InlineKeyboard }> {
+  const view = await transactionView(ctx, res.transaction, false);
+  const note = res.fallbackCategory ? '\n(Danh mục cũ đã ngừng dùng → ghi vào mục Khác)' : '';
+  return { text: `${view.text}${note}`, ...(view.keyboard ? { keyboard: view.keyboard } : {}) };
+}
+
+// Nút của tin nhắc: A = ghi đúng số đã khai · S = gửi tin nhắc nhập số khác · B = tháng này không có
+async function dueCallback(
+  ctx: BotContext,
+  member: ThanhVienRecord,
+  dueId: string,
+  action: 'A' | 'S' | 'B',
+  answer: Answer,
+  clicked?: TgMessage,
+): Promise<BotAction[]> {
+  if (!isSpouse(member)) {
+    return [answer(DENIED.WRONG_CONFIRMER)];
+  }
+  const me = member.id as MemberId;
+  const chatId = Number(member.telegram_user_id);
+  if (action === 'S') {
+    const due = await ctx.recurring.getDue(dueId);
+    if (!due) {
+      return [answer(DENIED.NOT_FOUND)];
+    }
+    if (due.trang_thai !== 'CHO' || !due.khoan_active || toVnDate(ctx.now()) > due.han_dong) {
+      return [answer(toVnDate(ctx.now()) > due.han_dong && due.trang_thai === 'CHO' ? 'Khoản này đã quá hạn bấm.' : dueDoneText(due)), ...(await dueResultActions(ctx, chatId, due, null, clicked))];
+    }
+    return [answer(), { type: 'send', chatId, text: recurringPromptText(due), forceReply: 'vd 1tr45' }];
+  }
+  if (action === 'B') {
+    const res = await ctx.recurring.skip(dueId, me);
+    if (res.kind === 'NOT_FOUND') {
+      return [answer(DENIED.NOT_FOUND)];
+    }
+    return [answer(res.kind === 'SKIPPED' ? `Đã đánh dấu: ${res.due.ten} tháng này không có` : dueDoneText(res.due)), ...(await dueResultActions(ctx, chatId, res.due, null, clicked))];
+  }
+  const res = await ctx.recurring.pay(dueId, me, null);
+  if (res.kind === 'NOT_FOUND') {
+    return [answer(DENIED.NOT_FOUND)];
+  }
+  if (res.kind !== 'PAID') {
+    return [answer(dueDoneText(res.due)), ...(await dueResultActions(ctx, chatId, res.due, null, clicked))];
+  }
+  return [answer('Đã ghi'), ...(await dueResultActions(ctx, chatId, res.due, await payResult(ctx, res), clicked))];
+}
+
+// Trả lời tin nhắc "Số khác" bằng số tiền. Sửa lại câu trả lời sau khi đã ghi → sửa số tiền khoản đó (như nút ✏️ Sửa).
+async function recurringReplyActions(
+  ctx: BotContext,
+  member: ThanhVienRecord,
+  incoming: IncomingMessage,
+  dueId: string,
+  edited: boolean,
+): Promise<BotAction[]> {
+  const chatId = incoming.chatId;
+  const send = (text: string): BotAction[] => [{ type: 'send', chatId, text }];
+  if (!isSpouse(member)) {
+    return send('Chỉ vợ / chồng ghi được khoản định kỳ.');
+  }
+  const amount = amountOnly(incoming.text, member.id as MemberId);
+  if (amount === null) {
+    return send('Chưa hiểu số tiền — trả lời lại tin nhắc bằng số, vd 1tr45.');
+  }
+  const due = await ctx.recurring.getDue(dueId);
+  if (!due) {
+    return send(DENIED.NOT_FOUND!);
+  }
+  if (edited && due.trang_thai === 'DA_GHI' && due.giao_dich_id) {
+    return editActions(ctx, member, chatId, await ctx.edits.fromReply(incoming, member, due.giao_dich_id));
+  }
+  const res = await ctx.recurring.pay(dueId, member.id as MemberId, amount);
+  if (res.kind === 'NOT_FOUND') {
+    return send(DENIED.NOT_FOUND!);
+  }
+  if (res.kind !== 'PAID') {
+    return [...send(dueDoneText(res.due)), ...(await redrawReminders(ctx, [res.due.ky], RecurringService.holdersOf(res.due)))];
+  }
+  return dueResultActions(ctx, chatId, res.due, await payResult(ctx, res));
 }

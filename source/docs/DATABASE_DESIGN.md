@@ -241,9 +241,16 @@ erDiagram
 
 ### 3.1f. Đánh dấu đã gửi báo cáo tháng — bảng `bao_cao_da_gui` (migration 0007 — bảng thứ 21, bảng vận hành)
 - `ky` ('YYYY-MM'), `thanh_vien_id`, `trang_thai` (`DANG_GUI` / `DA_GUI` / `LOI`), `so_lan`, `loi`; **UNIQUE (ky, thanh_vien_id)**.
-- Cron báo cáo (8h VN ngày 1, chạy lại mỗi giờ tới ngày 3) giữ chỗ bằng `INSERT … ON CONFLICT DO NOTHING`; chỉ gửi lại khi `LOI` hoặc kẹt `DANG_GUI` > 30 phút, tối đa 3 lần. Nhận được ảnh hoặc file → `DA_GUI`.
+- Cron báo cáo (theo cấu hình: mặc định 20h VN ngày 1, gửi bù tới ngày 3) giữ chỗ bằng `INSERT … ON CONFLICT DO NOTHING`; chỉ gửi lại khi `LOI` hoặc kẹt `DANG_GUI` > 30 phút, tối đa 3 lần mỗi ngày gửi. Nhận được ảnh hoặc file → `DA_GUI`.
 - Không đồng bộ desktop (không có trong `syncTablesOrder`). Neon: `temp/neon/09_bao_cao.sql`.
 - `giao_dich` loại `DIEU_CHINH` (TANG/GIAM) ghi qua lệnh `/dieuchinh` (key `api:<update_id hex>`): đổi số dư nhóm, không tính thu/chi.
+
+### 3.1g. Cấu hình + khoản định kỳ (migration 0008 — bảng 22–25, Phase 7)
+- **`cau_hinh`** (đồng bộ): `khoa` (PK, vd `dinh_ky.ngay_nhac`), `gia_tri` (chữ), `mo_ta`, `nguoi_cap_nhat_id`, version / xoá mềm. Danh mục khoá + kiểu + giới hạn + mặc định khai báo trong code (`src/config/settings.ts`); thiếu / sai / ngoài giới hạn / sai ràng buộc chéo → dùng mặc định. Seed 7 khoá (ON CONFLICT DO NOTHING). Sửa bằng `/cauhinh` (UPSERT + `lich_su_chinh_sua`); UI web sau này ghi thẳng Neon, tự tăng `version`.
+- **`khoan_dinh_ky`** (đồng bộ): `ten`, `ten_chuan` (không dấu — **UNIQUE khi `is_active` và chưa xoá**), `loai_giao_dich` THU/CHI, `so_tien` > 0, `danh_muc_id`, `nguoi_giu_tien_id` VO/CHONG/QUY_CHUNG, `ngay_trong_thang` (NULL = theo cấu hình chung; để dành), `bat_dau_ky`, `nguoi_tao_id`, `is_active` (dừng = FALSE, giữ dòng; `deleted_at` dành cho xoá thật).
+- **`khoan_dinh_ky_lan`** (đồng bộ): 1 dòng / khoản / tháng (**UNIQUE (khoan_dinh_ky_id, ky)**), chụp lại `loai_giao_dich`, `so_tien`, `danh_muc_id`, `nguoi_giu_tien_id` lúc tạo; `ngay_den_han`, `han_dong` (≥ ngày đến hạn); `trang_thai` CHO / DA_GHI / BO_QUA / QUA_HAN / DA_DUNG; `giao_dich_id` (khoản đã ghi); `so_lan_ghi` (tăng khi huỷ → khoá idempotency mới `api:<uuid lần>-<so_lan_ghi>`); `nguoi_xu_ly_id`. Đổi trạng thái luôn là UPDATE có điều kiện `WHERE trang_thai = 'CHO'` (khoá dòng, 2 người bấm → 1 giao dịch).
+- **`nhac_dinh_ky`** (vận hành, không đồng bộ): tin nhắc chung theo **(ky, thanh_vien_id, lan_nhac 1/2)**; `trang_thai` DANG_GUI / DA_GUI / LOI, `ngay_thu` + `so_lan_thu` (tối đa 3 lần / ngày VN), `telegram_message_id` (vẽ lại tin khi bấm), `gui_luc` (mốc tính ngày nhắc lại).
+- Khoản ghi từ định kỳ là `giao_dich` THU/CHI bình thường (vào thu chi như khoản nhắn tay). Neon: `temp/neon/10_khoan_dinh_ky.sql`.
 
 ### 3.2. Ràng buộc trên bảng `chuyen_tien_noi_bo`
 - `nguoi_chuyen_id <> nguoi_nhan_id`: Không thể tự chuyển cho chính mình.

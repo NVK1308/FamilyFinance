@@ -31,7 +31,9 @@ async function main() {
          (SELECT COUNT(*) FROM information_schema.tables
             WHERE table_schema = 'public' AND table_name = 'gia_vang')::int AS co_gia_vang,
          (SELECT COUNT(*) FROM information_schema.tables
-            WHERE table_schema = 'public' AND table_name = 'bao_cao_da_gui')::int AS co_bao_cao`,
+            WHERE table_schema = 'public' AND table_name = 'bao_cao_da_gui')::int AS co_bao_cao,
+         (SELECT COUNT(*) FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'khoan_dinh_ky_lan')::int AS co_dinh_ky`,
     );
     console.log(JSON.stringify(rows[0]));
     return;

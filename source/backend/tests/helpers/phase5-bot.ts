@@ -30,12 +30,16 @@ export class FakeTelegram implements TelegramClient {
   failFor = new Map<number, TelegramApiError>();
   failAll: Error | null = null;
   editError: TelegramApiError | null = null;
+  // message_id giả tăng dần cho tin gửi đi
+  private nextMessageId = 5000;
 
-  async sendMessage(chatId: number, text: string, keyboard?: InlineKeyboard, forceReply?: string): Promise<void> {
+  async sendMessage(chatId: number, text: string, keyboard?: InlineKeyboard, forceReply?: string): Promise<number> {
     if (this.failAll) throw this.failAll;
     const err = this.failFor.get(chatId);
     if (err) throw err;
-    this.calls.push({ method: 'send', chatId, text, ...(keyboard ? { keyboard } : {}), ...(forceReply ? { forceReply } : {}) });
+    this.nextMessageId += 1;
+    this.calls.push({ method: 'send', chatId, messageId: this.nextMessageId, text, ...(keyboard ? { keyboard } : {}), ...(forceReply ? { forceReply } : {}) });
+    return this.nextMessageId;
   }
   async editMessageText(chatId: number, messageId: number, text: string, keyboard?: InlineKeyboard): Promise<void> {
     if (this.failAll) throw this.failAll;

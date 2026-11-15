@@ -128,14 +128,23 @@ for (const backend of BACKENDS) {
       h.setNow('2027-01-02T03:00:00.000Z');
       assert.match(sentTo(await say(VO, '/baocao 12'), VO)[0]?.text ?? '', /^⏳ Đang tạo báo cáo tháng 12\/2026/);
       h.tg.take();
-      h.setNow('2026-12-01T01:00:00.000Z');
       h.tg.failFor.set(CHONG, new TelegramApiError('sendPhoto', 403, 'blocked'));
-      for (let hour = 1; hour <= 5; hour += 1) {
-        h.setNow(`2026-12-01T0${hour}:00:00.000Z`);
+      // 20h, 21h, 22h VN ngày 1 + 1 lượt thừa → hết 3 lần của ngày 1
+      for (const hour of [13, 14, 15, 15]) {
+        h.setNow(`2026-12-01T${hour}:00:00.000Z`);
         await h.cron(REPORT_CRON);
       }
-      const row = await env.db.queryOne<{ trang_thai: string; so_lan: unknown }>(`SELECT trang_thai, so_lan FROM bao_cao_da_gui WHERE thanh_vien_id = 'CHONG'`);
+      const soLan = async () =>
+        env.db.queryOne<{ trang_thai: string; so_lan: unknown }>(`SELECT trang_thai, so_lan FROM bao_cao_da_gui WHERE thanh_vien_id = 'CHONG'`);
+      let row = await soLan();
       assert.deepEqual([row?.trang_thai, Number(row?.so_lan)], ['LOI', 3]);
+      // Ngày 2 thử tiếp (3 lần / ngày gửi); ngày 4 (ngoài 3 ngày gửi bù) thì thôi
+      h.setNow('2026-12-02T13:00:00.000Z');
+      await h.cron(REPORT_CRON);
+      h.setNow('2026-12-04T13:00:00.000Z');
+      await h.cron(REPORT_CRON);
+      row = await soLan();
+      assert.deepEqual([row?.trang_thai, Number(row?.so_lan)], ['LOI', 4]);
     });
 
     it('/baocao trước, tháng sai, tháng chưa tới', async () => {
@@ -146,7 +155,10 @@ for (const backend of BACKENDS) {
     });
 
     it('cron ngày 1: gửi cả 2 người tháng trước, 1 lần; chụp 1 ảnh; người lỗi được gửi lại giờ sau', async () => {
-      h.setNow('2026-12-01T01:00:00.000Z'); // 08:00 VN
+      h.setNow('2026-12-01T12:00:00.000Z'); // 19:00 VN — chưa tới giờ gửi (mặc định 20h)
+      await h.cron(REPORT_CRON);
+      assert.equal(h.tg.take().length, 0);
+      h.setNow('2026-12-01T13:00:00.000Z'); // 20:00 VN
       h.tg.failFor.set(CHONG, new TelegramApiError('sendPhoto', 500, 'boom'));
       await h.cron(REPORT_CRON);
       let calls = h.tg.take();
@@ -155,7 +167,7 @@ for (const backend of BACKENDS) {
       assert.equal(h.shooter.shots.length, 1);
       // Chạy lại giờ sau: vợ đã nhận → không gửi; chồng lỗi → gửi lại
       h.tg.failFor.clear();
-      h.setNow('2026-12-01T02:00:00.000Z');
+      h.setNow('2026-12-01T14:00:00.000Z');
       await h.cron(REPORT_CRON);
       calls = h.tg.take();
       assert.equal(of(calls, VO, 'photo').length + of(calls, VO, 'document').length, 0);
@@ -167,6 +179,30 @@ for (const backend of BACKENDS) {
       // Cron job hết hạn (lịch khác) không gửi báo cáo
       await h.cron();
       assert.equal(h.tg.take().filter((c) => c.method === 'document').length, 0);
+    });
+
+    it('Phase 7: ngày 4 không gửi; lỡ ngày 1–2 thì ngày 3 gửi bù; đổi cấu hình ngày / giờ gửi', async () => {
+      h.setNow('2026-12-04T13:00:00.000Z');
+      await h.cron(REPORT_CRON);
+      assert.equal(h.tg.take().filter((c) => c.method === 'document').length, 0);
+      h.setNow('2026-12-03T13:00:00.000Z');
+      await h.cron(REPORT_CRON);
+      assert.equal(h.tg.take().filter((c) => c.method === 'document').length, 2);
+      // /cauhinh: gửi ngày 5 lúc 9h → tháng sau 09:00 ngày 5 mới gửi
+      assert.match(sentTo(await say(VO, '/cauhinh bao_cao.ngay_gui 5'), VO)[0]?.text ?? '', /bao_cao\.ngay_gui: 1 → 5/);
+      await say(VO, '/cauhinh bao_cao.gio_gui 9');
+      h.setNow('2027-01-01T13:00:00.000Z');
+      await h.cron(REPORT_CRON);
+      h.setNow('2027-01-05T01:00:00.000Z'); // 08:00 VN
+      await h.cron(REPORT_CRON);
+      assert.equal(h.tg.take().filter((c) => c.method === 'document').length, 0);
+      h.setNow('2027-01-05T02:00:00.000Z'); // 09:00 VN
+      await h.cron(REPORT_CRON);
+      assert.deepEqual(h.tg.take().filter((c) => c.method === 'document').map((c) => c.filename), ['bao-cao-2026-12.html', 'bao-cao-2026-12.html']);
+      // Lịch cũ còn trong wrangler.toml chưa đổi vẫn chạy được (không mất báo cáo)
+      h.setNow('2027-02-05T02:00:00.000Z');
+      await h.cron('0 1-14 1-3 * *');
+      assert.equal(h.tg.take().filter((c) => c.method === 'document').length, 2);
     });
   });
 }

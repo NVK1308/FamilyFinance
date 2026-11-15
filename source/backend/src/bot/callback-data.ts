@@ -7,7 +7,11 @@ export type CallbackData =
   | { kind: 'ct'; id: string } // huỷ chuyển tiền
   | { kind: 'qc'; id: string } // huỷ dòng quỹ chung
   | { kind: 'hk'; id: string } // huỷ dòng hũ tiết kiệm
-  | { kind: 'sd'; id: string }; // sửa số tiền giao dịch (gửi tin nhắc trả lời)
+  | { kind: 'sd'; id: string } // sửa số tiền giao dịch (gửi tin nhắc trả lời)
+  | { kind: 'dk'; id: string; action: DueAction } // khoản định kỳ đến hạn: A đã trả / S số khác / B tháng này không có
+  | { kind: 'dx'; id: string }; // dừng khoản định kỳ
+
+export type DueAction = 'A' | 'S' | 'B';
 
 export const CALLBACK_MAX_BYTES = 64;
 
@@ -22,6 +26,9 @@ export function encodeCallback(data: CallbackData): string {
       break;
     case 'lt':
       text = `lt:${data.id}:${data.to === 'THU' ? 'T' : 'C'}`;
+      break;
+    case 'dk':
+      text = `dk:${data.id}:${data.action}`;
       break;
     default:
       text = `${data.kind}:${data.id}`;
@@ -44,7 +51,8 @@ const PATTERNS: ReadonlyArray<[RegExp, (m: RegExpMatchArray) => CallbackData]> =
   [new RegExp(`^yc:(${ID}):([AR])$`), (m) => ({ kind: 'yc', id: m[1]!, accept: m[2] === 'A' })],
   [new RegExp(`^dm:(${ID}):([A-Z0-9_]+)$`), (m) => ({ kind: 'dm', id: m[1]!, code: m[2]! })],
   [new RegExp(`^lt:(${ID}):([TC])$`), (m) => ({ kind: 'lt', id: m[1]!, to: m[2] === 'T' ? 'THU' : 'CHI' })],
-  [new RegExp(`^(gd|ct|qc|hk|sd):(${ID})$`), (m) => ({ kind: m[1] as 'gd' | 'ct' | 'qc' | 'hk' | 'sd', id: m[2]! })],
+  [new RegExp(`^dk:(${ID}):([ASB])$`), (m) => ({ kind: 'dk', id: m[1]!, action: m[2] as DueAction })],
+  [new RegExp(`^(gd|ct|qc|hk|sd|dx):(${ID})$`), (m) => ({ kind: m[1] as 'gd' | 'ct' | 'qc' | 'hk' | 'sd' | 'dx', id: m[2]! })],
 ];
 
 // Dữ liệu lạ / sai dạng → null (bỏ qua)

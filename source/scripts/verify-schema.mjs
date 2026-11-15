@@ -17,6 +17,8 @@ const sqlite0006Path = `${root}/desktop/FamilyFinance.Data/Migrations/0006_gia_v
 const postgres0006Path = `${root}/backend/migrations/0006_gia_vang.postgres.sql`;
 const sqlite0007Path = `${root}/desktop/FamilyFinance.Data/Migrations/0007_bao_cao_da_gui.sqlite.sql`;
 const postgres0007Path = `${root}/backend/migrations/0007_bao_cao_da_gui.postgres.sql`;
+const sqlite0008Path = `${root}/desktop/FamilyFinance.Data/Migrations/0008_khoan_dinh_ky.sqlite.sql`;
+const postgres0008Path = `${root}/backend/migrations/0008_khoan_dinh_ky.postgres.sql`;
 const postgresSchemaPath = `${root}/backend/migrations/0001_initial_schema.postgres.sql`;
 const seedPath = `${root}/backend/seeds/0001_seed_reference_data.sql`;
 const contractsPath = `${root}/shared/contracts/domain-contracts.json`;
@@ -207,10 +209,40 @@ const pgTables0007 = [...pg0007.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g)].m
 assert.deepEqual([...pgTables, ...pgTables0003, ...pgTables0004, ...pgTables0005, ...pgTables0006, ...pgTables0007].sort(), tables0007, 'Bảng Postgres (0001+0003..0007) phải khớp SQLite');
 assert.ok(pg0007.includes('UNIQUE (ky, thanh_vien_id)'), '0007 Postgres thiếu UNIQUE (ky, thanh_vien_id)');
 
+// 11. Migration 0008: cau_hinh + khoan_dinh_ky + khoan_dinh_ky_lan (đồng bộ) + nhac_dinh_ky (vận hành) — 25 bảng
+db.exec(fs.readFileSync(sqlite0008Path, 'utf8'));
+db.exec(fs.readFileSync(sqlite0008Path, 'utf8'));
+const tables0008 = db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(r => r.name);
+assert.equal(tables0008.length, 25, `Sau 0008 phải có 25 bảng, có ${tables0008.length}`);
+assert.equal(db.prepare('SELECT COUNT(*) AS c FROM cau_hinh').get().c, 7, 'Seed cau_hinh phải có 7 khoá (chạy 2 lần không trùng)');
+const insertItem = (id, ten, active = 1) => db.prepare(`
+  INSERT INTO khoan_dinh_ky (id, ten, ten_chuan, loai_giao_dich, so_tien, danh_muc_id, nguoi_giu_tien_id, bat_dau_ky, nguoi_tao_id, is_active, created_at, updated_at)
+  VALUES (?, ?, ?, 'CHI', 1500000, 'DM_DIEN', 'VO', '2026-11', 'VO', ?, 'x', 'x')
+`).run(id, ten, ten.toLowerCase(), active);
+insertItem('K1', 'Tiền điện');
+assert.throws(() => insertItem('K2', 'Tiền điện'), /UNIQUE constraint failed/);
+insertItem('K3', 'Tiền điện', 0); // khoản đã dừng được trùng tên
+const insertDue = (id, ky, han = '2026-11-12') => db.prepare(`
+  INSERT INTO khoan_dinh_ky_lan (id, khoan_dinh_ky_id, ky, ngay_den_han, han_dong, loai_giao_dich, so_tien, danh_muc_id, nguoi_giu_tien_id, trang_thai, created_at, updated_at)
+  VALUES (?, 'K1', ?, '2026-11-02', ?, 'CHI', 1500000, 'DM_DIEN', 'VO', 'CHO', 'x', 'x')
+`).run(id, ky, han);
+insertDue('L1', '2026-11');
+assert.throws(() => insertDue('L2', '2026-11'), /UNIQUE constraint failed/);
+assert.throws(() => insertDue('L3', '2026-12', '2026-10-01'), /CHECK constraint failed/);
+const pg0008 = fs.readFileSync(postgres0008Path, 'utf8');
+const pgTables0008 = [...pg0008.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g)].map(m => m[1]);
+assert.deepEqual([...pgTables, ...pgTables0003, ...pgTables0004, ...pgTables0005, ...pgTables0006, ...pgTables0007, ...pgTables0008].sort(), tables0008, 'Bảng Postgres (0001+0003..0008) phải khớp SQLite');
+for (const t of ['cau_hinh', 'khoan_dinh_ky', 'khoan_dinh_ky_lan']) {
+  assert.ok(syncOrder.includes(t), `syncTablesOrder thiếu ${t}`);
+}
+assert.ok(!syncOrder.includes('nhac_dinh_ky'), 'nhac_dinh_ky là bảng vận hành, không đồng bộ');
+assert.ok(syncOrder.indexOf('khoan_dinh_ky') < syncOrder.indexOf('khoan_dinh_ky_lan') && syncOrder.indexOf('giao_dich') < syncOrder.indexOf('khoan_dinh_ky_lan'), 'Thứ tự đồng bộ: cha trước con');
+
 console.log('✅ Schema & Contracts Verification PASSED!');
 console.log('   - Tables verified (PostgreSQL & SQLite 1:1):', tables.length);
 console.log(`   - Seed data verified: ${memberCount} members, ${categoryCount} categories, ${keywordCount} keywords, ${beneficiaryCount} beneficiaries`);
 console.log('   - Integrity constraints verified: positive amount, distinct transfer parties, valid money holder');
+console.log('   - Migration 0008 verified: cau_hinh + khoan_dinh_ky + khoan_dinh_ky_lan + nhac_dinh_ky (25 bảng), seed 7 khoá, tên khoản duy nhất khi đang chạy');
 console.log('   - Migration 0007 verified: bao_cao_da_gui (21 bảng), 1 dòng / (tháng, người), kỳ YYYY-MM');
 console.log('   - Migration 0006 verified: gia_vang (20 bảng), giá > 0, chạy lại được');
 console.log('   - Migration 0005 verified: hu (19 bảng), hu_id/giao_dich_id, tên hũ duy nhất (trừ hũ đã xoá), dòng cũ → TIET_KIEM');

@@ -41,6 +41,11 @@ export function toVnDate(date: Date): string {
   return VN_DATE_FORMAT.format(date);
 }
 
+// Giờ (0–23) theo giờ Việt Nam (UTC+7, không đổi giờ mùa hè)
+export function toVnHour(date: Date): number {
+  return (date.getUTCHours() + 7) % 24;
+}
+
 // Ngày đầu / cuối tháng (YYYY-MM-DD) chứa thời điểm này theo giờ VN
 export function vnMonthRange(date: Date): { from: string; to: string } {
   const [y, m] = toVnDate(date).split('-').map(Number) as [number, number];

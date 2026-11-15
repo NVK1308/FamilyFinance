@@ -19,6 +19,7 @@ import {
   type TransactionType,
 } from '../config/constants.ts';
 import { insertAuditLog } from '../db/audit-repository.ts';
+import { reopenDueOfTransaction, type DueRow } from '../db/repositories/recurring-repository.ts';
 import {
   closeConfirmation,
   getActiveCategoryByCode,
@@ -100,6 +101,8 @@ export interface ConfirmationResult {
 export interface CancelResult {
   changed: boolean;
   transaction: GiaoDichRecord;
+  // Giao dịch ghi từ khoản định kỳ: lần đến hạn sau khi huỷ (về CHO → bấm lại được)
+  lanDinhKy?: DueRow | null;
 }
 
 // Loại ghi được qua hàm tường minh; VAY/TRA_NO đi qua DebtService
@@ -682,6 +685,7 @@ export class TransactionService {
       }
       // Khoản chi trả từ hũ → huỷ luôn dòng lấy ra khỏi hũ đi kèm (tiền về lại hũ)
       await this.savings.cancelLinked(tx, before.id, nguoiHuyId, nowIso);
+      const lanDinhKy = await reopenDueOfTransaction(tx, before.id, toVnDate(this.now()), nowIso);
       if (before.source_message_id) {
         for (const c of await listConfirmationsByMessage(tx, before.source_message_id)) {
           if (c.trang_thai === CONFIRMATION_STATUS.CHO_XAC_NHAN) {
@@ -700,7 +704,7 @@ export class TransactionService {
         ly_do: lyDo,
         nowIso,
       });
-      return { changed: true, transaction: after ?? before };
+      return { changed: true, transaction: after ?? before, lanDinhKy };
     });
   }
 

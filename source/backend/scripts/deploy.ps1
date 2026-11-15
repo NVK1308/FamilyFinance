@@ -203,7 +203,7 @@ function Step1 {
 }
 
 function Step2 {
-  Write-Step 2 'Tao wrangler.toml (production, cron 1h sang VN + bao cao thang 8h ngay 1-3)'
+  Write-Step 2 'Tao wrangler.toml (production, cron 1h sang VN + moi gio 7h-22h VN: nhac dinh ky, bao cao thang)'
   $path = Join-Path $Backend 'wrangler.toml'
   if (-not (Test-Path $path)) {
     Copy-Item (Join-Path $Backend 'wrangler.toml.example') $path
@@ -211,12 +211,13 @@ function Step2 {
   }
   $text = [IO.File]::ReadAllText($path)
   $new = $text -replace 'ENVIRONMENT\s*=\s*"[^"]*"', 'ENVIRONMENT = "production"'
-  # Job het han 18:00 UTC; bao cao thang 01:00-14:00 UTC ngay 1-3 (8h sang VN, chay bat bu)
-  $cronLine = 'crons = ["0 18 * * *", "0 1-14 1-3 * *"]'
+  # Job het han 18:00 UTC; moi gio 00:00-15:00 UTC (7h-22h VN): nhac khoan dinh ky + bao cao thang,
+  # ngay / gio lam viec doc tu bang cau_hinh (/cauhinh). Lich cu "0 1-14 1-3 * *" duoc thay bang lich moi.
+  $cronLine = 'crons = ["0 18 * * *", "0 0-15 * * *"]'
   if ($new -notmatch 'crons\s*=') { $new += "`n[triggers]`n$cronLine`n" }
-  elseif ($new -notmatch '0 1-14 1-3 \* \*') {
+  elseif ($new -notmatch '"0 0-15 \* \* \*"') {
     $new = $new -replace 'crons\s*=\s*\[[^\]]*\]', $cronLine
-    Write-Host 'Da them lich cron bao cao thang'
+    Write-Host 'Da doi lich cron: moi gio 7h-22h VN (nhac dinh ky + bao cao thang)'
   }
   if ($new -ne $text) {
     [IO.File]::WriteAllText($path, $new, (New-Object System.Text.UTF8Encoding $false))
@@ -263,6 +264,7 @@ function Step5 {
   if ($c.hu_dung_kieu -lt 1) { Fail 'Bang hu tren Neon sai kieu (lo chay ban SQLite) - chay temp/neon/07_sua_bang_hu.sql' }
   if ($c.co_gia_vang -lt 1) { Fail 'Neon chua co bang gia_vang (migration 0006) - chay temp/neon/08_gia_vang.sql truoc' }
   if ($c.co_bao_cao -lt 1) { Fail 'Neon chua co bang bao_cao_da_gui (migration 0007) - chay temp/neon/09_bao_cao.sql truoc' }
+  if ($c.co_dinh_ky -lt 1) { Fail 'Neon chua co bang khoan dinh ky (migration 0008) - chay temp/neon/10_khoan_dinh_ky.sql truoc' }
   if (-not (Confirm-Go 'Ghi 2 secret nay vao Worker?')) { Fail 'Da dung' }
   Set-WorkerSecrets @{ TELEGRAM_BOT_TOKEN = $token; NEON_DATABASE_URL = $neon }
 }

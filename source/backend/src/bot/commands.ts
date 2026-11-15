@@ -18,6 +18,11 @@ import { parsePeriod } from '../query/period-parser.ts';
 import type { QuerySpec } from '../query/types.ts';
 import { goldPricePerChi, isFarFromPrice, type SavingsSummary } from '../services/savings-service.ts';
 import type { BotContext } from './handler.ts';
+import { SETTING_DEFS, SETTING_KEYS, type Settings } from '../config/settings.ts';
+import { loadSettings, updateSetting } from '../services/settings-service.ts';
+import { dueDateOf, monthOf, shiftMonth } from '../services/recurring-service.ts';
+import { listDues } from '../db/repositories/recurring-repository.ts';
+import { RECURRING_SYNTAX, itemLine, itemListView } from './recurring-replies.ts';
 import { periodSummaryText } from './query-replies.ts';
 import { memberChatId, otherMember } from './members.ts';
 import {
@@ -89,6 +94,10 @@ export async function runCommand(
       return adjustBalance(ctx, member, chatId, args, updateId);
     case 'baocao':
       return monthlyReport(ctx, chatId, args);
+    case 'dinhky':
+      return recurringCommand(ctx, member, chatId, args);
+    case 'cauhinh':
+      return reply(await settingsCommand(ctx, member, args));
     default:
       return reply(`Không có lệnh /${name}.\n${HELP_TEXT}`);
   }
@@ -137,13 +146,13 @@ function cleanArgs(args: string[]): string[] {
   return cleaned.length > 1 && CURRENCY_WORD.test(cleaned[cleaned.length - 1]!) ? cleaned.slice(0, -1) : cleaned;
 }
 
-function splitNameAndAmount(rawArgs: string[], memberId: MemberId): { name: string; amount: number | null } {
+// minAmount: số trần nhỏ hơn không tính là tiền (mục tiêu hũ: "2026" không phải 2.026đ)
+function splitNameAndAmount(rawArgs: string[], memberId: MemberId, minAmount = 10_000): { name: string; amount: number | null } {
   const args = cleanArgs(rawArgs);
   for (const n of [2, 1]) {
     if (args.length > n) {
       const amount = parseMoneyArg(args.slice(-n).join(' '), memberId);
-      // Số trần dưới 10.000 ("2026") không phải mục tiêu
-      if (amount && amount >= 10_000) {
+      if (amount && amount >= minAmount) {
         return { name: args.slice(0, -n).join(' '), amount };
       }
     }
@@ -583,4 +592,104 @@ async function setInitial(ctx: BotContext, memberId: MemberId, args: string[]): 
     `• Chồng: ${formatMoney(chong)}`,
     `• Quỹ chung: ${formatMoney(quy)}`,
   ].join('\n') + warn;
+}
+
+// ---------- Phase 7: khoản định kỳ + cấu hình ----------
+
+// Chỉ vợ / chồng (tài khoản quản trị không ghi khoản / đổi cấu hình qua bot)
+export function isSpouse(member: ThanhVienRecord): boolean {
+  return member.vai_tro === 'VO' || member.vai_tro === 'CHONG';
+}
+
+const RECURRING_HOLDER: Record<string, MoneyHolderId> = { vo: 'VO', chong: 'CHONG', quy: 'QUY_CHUNG', 'quy chung': 'QUY_CHUNG' };
+
+// "/dinhky tiền điện 1tr5 [vợ|chồng|quỹ]" → tên + số tiền + người trả (mặc định người gõ).
+// "ngày N" bị bỏ qua: ngày nhắc là cấu hình chung.
+export function parseRecurringArgs(
+  rawArgs: string[],
+  memberId: MemberId,
+): { ten: string; soTien: number; holder: MoneyHolderId; ignoredDay: boolean } | null {
+  let args = cleanArgs(rawArgs);
+  const ascii = (t: string) => removeVietnameseDiacritics(t.toLowerCase());
+  let ignoredDay = false;
+  const dayAt = args.findIndex((t, i) => ascii(t) === 'ngay' && /^\d{1,2}$/.test(args[i + 1] ?? ''));
+  if (dayAt >= 0) {
+    args = [...args.slice(0, dayAt), ...args.slice(dayAt + 2)];
+    ignoredDay = true;
+  }
+  let holder: MoneyHolderId = memberId;
+  const lastTwo = args.length >= 2 ? ascii(args.slice(-2).join(' ')) : '';
+  if (RECURRING_HOLDER[lastTwo]) {
+    holder = RECURRING_HOLDER[lastTwo]!;
+    args = args.slice(0, -2);
+  } else if (args.length > 0 && RECURRING_HOLDER[ascii(args[args.length - 1]!)]) {
+    holder = RECURRING_HOLDER[ascii(args[args.length - 1]!)]!;
+    args = args.slice(0, -1);
+  }
+  const { name, amount } = splitNameAndAmount(args, memberId, 1_000);
+  return amount && name.trim() ? { ten: name.trim(), soTien: amount, holder, ignoredDay } : null;
+}
+
+// Danh sách /dinhky (dùng cho lệnh + vẽ lại sau khi bấm Dừng)
+export async function recurringListView(ctx: BotContext, settings: Settings): Promise<{ text: string; keyboard: InlineKeyboard }> {
+  const ky = monthOf(toVnDate(ctx.now()));
+  const dues = [...(await listDues(ctx.db, shiftMonth(ky, -1))), ...(await listDues(ctx.db, ky))];
+  return itemListView(await ctx.recurring.listItems(), dues, settings, ky);
+}
+
+async function recurringCommand(ctx: BotContext, member: ThanhVienRecord, chatId: number, args: string[]): Promise<BotAction[]> {
+  const send = (text: string, keyboard?: InlineKeyboard): BotAction[] => [{ type: 'send', chatId, text, ...(keyboard && keyboard.length ? { keyboard } : {}) }];
+  if (!isSpouse(member)) {
+    return send('Chỉ vợ / chồng dùng được /dinhky.');
+  }
+  const settings = await loadSettings(ctx.db);
+  const ky = monthOf(toVnDate(ctx.now()));
+  if (args.length === 0) {
+    const view = await recurringListView(ctx, settings);
+    return send(view.text, view.keyboard);
+  }
+  const parsed = parseRecurringArgs(args, member.id as MemberId);
+  if (!parsed) {
+    return send(`Chưa hiểu. ${RECURRING_SYNTAX}`);
+  }
+  const res = await ctx.recurring.upsert(member.id as MemberId, parsed, settings);
+  if (res.kind === 'LIMIT') {
+    return send('Đã đủ 30 khoản định kỳ — dừng bớt khoản cũ trong /dinhky rồi thêm lại.');
+  }
+  const first = dueDateOf(res.item.bat_dau_ky, settings['dinh_ky.ngay_nhac']);
+  const lines = [
+    `🔁 ${res.kind === 'CREATED' ? 'Đã thêm' : 'Đã cập nhật'} khoản định kỳ: ${itemLine(res.item)}`,
+    `Danh mục: ${res.categoryName}`,
+    res.kind === 'CREATED'
+      ? `Nhắc lần đầu: ${formatDay(first)} lúc ${settings['dinh_ky.gio_nhac']}:00 (nhắc chung mọi khoản ngày ${settings['dinh_ky.ngay_nhac']} hằng tháng).`
+      : 'Tin nhắc đã gửi giữ số cũ; số mới áp dụng từ lần nhắc sau.',
+  ];
+  if (parsed.ignoredDay) {
+    lines.push(`Ngày nhắc là ngày chung (${settings['dinh_ky.ngay_nhac']}), đổi bằng /cauhinh dinh_ky.ngay_nhac <ngày>.`);
+  }
+  lines.push('Xem / dừng: /dinhky');
+  return send(lines.join('\n'));
+}
+
+const SETTINGS_SYNTAX = 'Sửa: /cauhinh <khoá> <giá trị>, vd /cauhinh dinh_ky.ngay_nhac 5';
+
+async function settingsCommand(ctx: BotContext, member: ThanhVienRecord, args: string[]): Promise<string> {
+  if (!isSpouse(member)) {
+    return 'Chỉ vợ / chồng dùng được /cauhinh.';
+  }
+  if (args.length === 0) {
+    const values = await loadSettings(ctx.db);
+    const lines = SETTING_KEYS.map((k) => `• ${k} = ${values[k]} — ${SETTING_DEFS[k].moTa} (${SETTING_DEFS[k].min}–${SETTING_DEFS[k].max})`);
+    return ['⚙️ Cấu hình', ...lines, '', SETTINGS_SYNTAX].join('\n');
+  }
+  if (args.length !== 2) {
+    return SETTINGS_SYNTAX;
+  }
+  const res = await updateSetting(ctx.db, args[0]!.toLowerCase(), args[1]!, member.id as MemberId, ctx.now().toISOString());
+  if (res.kind === 'ERROR') {
+    return `${res.message}\n${SETTINGS_SYNTAX}`;
+  }
+  return res.before === res.after
+    ? `${res.key} đang là ${res.after} — không đổi.`
+    : `⚙️ ${res.key}: ${res.before} → ${res.after}. Áp dụng từ lượt chạy sau (tin nhắc đã gửi giữ lịch cũ).`;
 }
